@@ -41,7 +41,7 @@ class GarmentData:
     garment_state: GarmentState = GarmentState.CLEAN
     wear_count_since_wash: int = 0
     total_wear_count: int = 0
-    needs_washing_threshold: int = 3
+    needs_washing_threshold: int = 2
     last_worn: str | None = None
     last_washed: str | None = None
     last_scanned_at: str | None = None
@@ -77,7 +77,7 @@ class GarmentData:
             garment_state=GarmentState(data.get("garment_state", "clean")),
             wear_count_since_wash=data.get("wear_count_since_wash", 0),
             total_wear_count=data.get("total_wear_count", 0),
-            needs_washing_threshold=data.get("needs_washing_threshold", 3),
+            needs_washing_threshold=data.get("needs_washing_threshold", 2),
             last_worn=data.get("last_worn"),
             last_washed=data.get("last_washed"),
             last_scanned_at=data.get("last_scanned_at"),

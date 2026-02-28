@@ -19,26 +19,7 @@ register_garment:
       description: Type of clothing (e.g. shirt, jeans).
       required: true
       selector:
-        select:
-          options:
-            - shirt
-            - t_shirt
-            - polo
-            - blouse
-            - sweater
-            - hoodie
-            - jacket
-            - coat
-            - jeans
-            - pants
-            - shorts
-            - skirt
-            - dress
-            - suit
-            - underwear
-            - socks
-            - sportswear
-            - other
+        text:
     color:
       name: Color
       description: Color of the garment.
@@ -49,7 +30,7 @@ register_garment:
       name: Needs washing threshold
       description: Number of wears before the garment needs washing.
       required: false
-      default: 3
+      default: 2
       selector:
         number:
           min: 1
@@ -61,11 +42,13 @@ remove_garment:
   description: Remove a garment from the wardrobe.
   fields:
     tag_id:
-      name: Tag ID
-      description: NFC tag UID of the garment to remove.
+      name: Garment
+      description: Select the garment to remove.
       required: true
       selector:
-        text:
+        device:
+          filter:
+            - integration: wardrobe_manager
 
 register_scanner:
   name: Register scanner
@@ -101,11 +84,13 @@ force_state:
   description: Force a garment into a specific state.
   fields:
     tag_id:
-      name: Tag ID
-      description: NFC tag UID of the garment.
+      name: Garment
+      description: Select the garment.
       required: true
       selector:
-        text:
+        device:
+          filter:
+            - integration: wardrobe_manager
     state:
       name: State
       description: Target garment state.
@@ -125,11 +110,13 @@ log_wash_cycle:
   description: Manually log a wash cycle for a garment without using a scanner.
   fields:
     tag_id:
-      name: Tag ID
-      description: NFC tag UID of the garment.
+      name: Garment
+      description: Select the garment.
       required: true
       selector:
-        text:
+        device:
+          filter:
+            - integration: wardrobe_manager
     method:
       name: Method
       description: Washing method (e.g. machine_30, hand_wash).

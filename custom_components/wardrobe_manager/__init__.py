@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     CONF_CATEGORY,
@@ -94,6 +95,17 @@ def _get_entry_id(hass: HomeAssistant) -> str:
     return hass.data[DOMAIN]["entry_id"]
 
 
+def _resolve_tag_id(hass: HomeAssistant, value: str) -> str:
+    """Resolve a device_id to a tag_id, or return the value as-is."""
+    registry = dr.async_get(hass)
+    device = registry.async_get(value)
+    if device is not None:
+        for domain, identifier in device.identifiers:
+            if domain == DOMAIN:
+                return identifier
+    return value
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Wardrobe Manager from a config entry."""
     coordinator = WardrobeDataUpdateCoordinator(hass)
@@ -154,7 +166,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_remove_garment(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
-        tag_id = call.data[CONF_TAG_ID]
+        tag_id = _resolve_tag_id(hass, call.data[CONF_TAG_ID])
         await coordinator.async_remove_garment(tag_id)
         async_remove_garment_device(hass, tag_id)
 
@@ -169,14 +181,14 @@ def _register_services(hass: HomeAssistant) -> None:
     async def handle_force_state(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
         await coordinator.async_force_state(
-            tag_id=call.data[CONF_TAG_ID],
+            tag_id=_resolve_tag_id(hass, call.data[CONF_TAG_ID]),
             state=GarmentState(call.data["state"]),
         )
 
     async def handle_log_wash_cycle(call: ServiceCall) -> None:
         coordinator = _get_coordinator(hass)
         await coordinator.async_log_wash_cycle(
-            tag_id=call.data[CONF_TAG_ID],
+            tag_id=_resolve_tag_id(hass, call.data[CONF_TAG_ID]),
             method=call.data["method"],
         )
 

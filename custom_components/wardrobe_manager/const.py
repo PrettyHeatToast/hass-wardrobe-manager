@@ -27,7 +27,7 @@ CONF_CATEGORY: Final = "category"
 CONF_COLOR: Final = "color"
 CONF_NEEDS_WASHING_THRESHOLD: Final = "needs_washing_threshold"
 
-DEFAULT_NEEDS_WASHING_THRESHOLD: Final = 3
+DEFAULT_NEEDS_WASHING_THRESHOLD: Final = 2
 
 
 class ScannerRole(StrEnum):

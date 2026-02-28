@@ -24,7 +24,6 @@ from .const import (
     CONF_TAG_ID,
     DEFAULT_NEEDS_WASHING_THRESHOLD,
     DOMAIN,
-    GARMENT_CATEGORIES,
     ScannerRole,
 )
 
@@ -174,9 +173,7 @@ class WardrobeManagerOptionsFlow(OptionsFlowWithConfigEntry):
                 {
                     vol.Required(CONF_TAG_ID): str,
                     vol.Required(CONF_GARMENT_NAME): str,
-                    vol.Required(CONF_CATEGORY): vol.In(
-                        {cat: cat for cat in GARMENT_CATEGORIES}
-                    ),
+                    vol.Required(CONF_CATEGORY): str,
                     vol.Optional(CONF_COLOR, default=""): str,
                     vol.Optional(
                         CONF_NEEDS_WASHING_THRESHOLD,
