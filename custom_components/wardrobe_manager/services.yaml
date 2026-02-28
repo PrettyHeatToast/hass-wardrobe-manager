@@ -1,0 +1,138 @@
+register_garment:
+  name: Register garment
+  description: Register a new clothing item in the wardrobe.
+  fields:
+    tag_id:
+      name: Tag ID
+      description: NFC tag UID of the garment.
+      required: true
+      selector:
+        text:
+    garment_name:
+      name: Name
+      description: Display name for the garment.
+      required: true
+      selector:
+        text:
+    category:
+      name: Category
+      description: Type of clothing (e.g. shirt, jeans).
+      required: true
+      selector:
+        select:
+          options:
+            - shirt
+            - t_shirt
+            - polo
+            - blouse
+            - sweater
+            - hoodie
+            - jacket
+            - coat
+            - jeans
+            - pants
+            - shorts
+            - skirt
+            - dress
+            - suit
+            - underwear
+            - socks
+            - sportswear
+            - other
+    color:
+      name: Color
+      description: Color of the garment.
+      required: false
+      selector:
+        text:
+    needs_washing_threshold:
+      name: Needs washing threshold
+      description: Number of wears before the garment needs washing.
+      required: false
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 50
+          step: 1
+
+remove_garment:
+  name: Remove garment
+  description: Remove a garment from the wardrobe.
+  fields:
+    tag_id:
+      name: Tag ID
+      description: NFC tag UID of the garment to remove.
+      required: true
+      selector:
+        text:
+
+register_scanner:
+  name: Register scanner
+  description: Register an ESPhome NFC scanner.
+  fields:
+    scanner_id:
+      name: Scanner ID
+      description: ESPhome scanner identifier (must match scanner_id in ESPhome event).
+      required: true
+      selector:
+        text:
+    scanner_role:
+      name: Role
+      description: The role of this scanner in the laundry workflow.
+      required: true
+      selector:
+        select:
+          options:
+            - closet
+            - laundry_bin
+            - washer
+            - dryer
+            - ironing
+    scanner_name:
+      name: Name
+      description: Friendly name for the scanner.
+      required: true
+      selector:
+        text:
+
+force_state:
+  name: Force state
+  description: Force a garment into a specific state.
+  fields:
+    tag_id:
+      name: Tag ID
+      description: NFC tag UID of the garment.
+      required: true
+      selector:
+        text:
+    state:
+      name: State
+      description: Target garment state.
+      required: true
+      selector:
+        select:
+          options:
+            - clean
+            - worn
+            - in_laundry_bin
+            - washing
+            - drying
+            - needs_ironing
+
+log_wash_cycle:
+  name: Log wash cycle
+  description: Manually log a wash cycle for a garment without using a scanner.
+  fields:
+    tag_id:
+      name: Tag ID
+      description: NFC tag UID of the garment.
+      required: true
+      selector:
+        text:
+    method:
+      name: Method
+      description: Washing method (e.g. machine_30, hand_wash).
+      required: true
+      selector:
+        text:

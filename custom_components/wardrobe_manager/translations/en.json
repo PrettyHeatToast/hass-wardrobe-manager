@@ -1,0 +1,128 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Wardrobe Manager",
+        "description": "Set up the Wardrobe Manager integration. Scanners and garments can be added after setup via the Configure button."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only a single instance of Wardrobe Manager is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "add_scanner": "Add a scanner",
+          "remove_scanner": "Remove a scanner",
+          "add_garment": "Add a garment",
+          "remove_garment": "Remove a garment"
+        }
+      },
+      "add_scanner": {
+        "title": "Add scanner",
+        "description": "Register an ESPhome NFC scanner. The scanner ID must match the scanner_id in your ESPhome event data.",
+        "data": {
+          "scanner_id": "Scanner ID",
+          "scanner_role": "Role",
+          "scanner_name": "Name"
+        }
+      },
+      "remove_scanner": {
+        "title": "Remove scanner",
+        "description": "Select a scanner to remove.",
+        "data": {
+          "scanner_id": "Scanner"
+        }
+      },
+      "add_garment": {
+        "title": "Add garment",
+        "description": "Register a new clothing item. The tag ID is the NFC tag UID embedded in the garment.",
+        "data": {
+          "tag_id": "NFC Tag ID",
+          "garment_name": "Name",
+          "category": "Category",
+          "color": "Color",
+          "needs_washing_threshold": "Wears before washing"
+        }
+      },
+      "remove_garment": {
+        "title": "Remove garment",
+        "description": "Select a garment to remove from the wardrobe.",
+        "data": {
+          "tag_id": "Garment"
+        }
+      }
+    },
+    "abort": {
+      "no_scanners": "No scanners registered yet. Add a scanner first.",
+      "no_garments": "No garments registered yet. Add a garment first."
+    },
+    "error": {
+      "tag_already_registered": "A garment with this tag ID is already registered."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "last_worn": {
+        "name": "Last worn"
+      },
+      "last_washed": {
+        "name": "Last washed"
+      },
+      "wear_count_since_wash": {
+        "name": "Wear count since wash"
+      },
+      "total_wear_count": {
+        "name": "Total wear count"
+      },
+      "last_scanned_at": {
+        "name": "Last scanned at"
+      }
+    },
+    "select": {
+      "garment_state": {
+        "name": "State",
+        "state": {
+          "clean": "Clean",
+          "worn": "Worn",
+          "in_laundry_bin": "In laundry bin",
+          "washing": "Washing",
+          "drying": "Drying",
+          "needs_ironing": "Needs ironing"
+        }
+      }
+    },
+    "binary_sensor": {
+      "needs_washing": {
+        "name": "Needs washing"
+      }
+    },
+    "button": {
+      "mark_clean": {
+        "name": "Mark clean"
+      },
+      "mark_worn": {
+        "name": "Mark worn"
+      }
+    },
+    "event": {
+      "state_change": {
+        "name": "State change",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "clean": "Clean",
+              "worn": "Worn",
+              "in_laundry_bin": "In laundry bin",
+              "washing": "Washing",
+              "drying": "Drying",
+              "needs_ironing": "Needs ironing"
+            }
+          }
+        }
+      }
+    }
+  }
+}
