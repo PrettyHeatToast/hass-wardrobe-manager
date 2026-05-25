@@ -8,6 +8,8 @@
         "data": {
           "name": "Name",
           "category": "Category",
+          "laundry_type": "Laundry type",
+          "wear_threshold": "Wear threshold (0 = disabled)",
           "nfc_tag_id": "NFC tag ID (optional)"
         }
       }
@@ -23,9 +25,11 @@
     "step": {
       "init": {
         "title": "Edit wardrobe item",
-        "description": "Update the category or NFC tag ID for this item.",
+        "description": "Update the category, laundry type, wear threshold or NFC tag ID for this item.",
         "data": {
           "category": "Category",
+          "laundry_type": "Laundry type",
+          "wear_threshold": "Wear threshold (0 = disabled)",
           "nfc_tag_id": "NFC tag ID"
         }
       }
@@ -43,6 +47,34 @@
           "worn": "Worn",
           "laundry": "Laundry"
         }
+      }
+    },
+    "sensor": {
+      "wears_since_wash": {
+        "name": "Wears since wash"
+      },
+      "wear_count_total": {
+        "name": "Total wears"
+      },
+      "last_worn_at": {
+        "name": "Last worn"
+      },
+      "state_changed_at": {
+        "name": "State changed at"
+      },
+      "summary_clean": {
+        "name": "Clean items"
+      },
+      "summary_worn": {
+        "name": "Worn items"
+      },
+      "summary_laundry": {
+        "name": "Laundry items"
+      }
+    },
+    "binary_sensor": {
+      "needs_washing": {
+        "name": "Needs washing"
       }
     }
   },
@@ -73,6 +105,14 @@
         "worn": "Worn",
         "laundry": "Laundry"
       }
+    },
+    "laundry_type": {
+      "options": {
+        "dark": "Dark",
+        "light": "Light",
+        "color": "Color",
+        "delicates": "Delicates"
+      }
     }
   },
   "services": {
@@ -87,6 +127,28 @@
         "state": {
           "name": "State",
           "description": "Target state for the wardrobe item."
+        }
+      }
+    },
+    "bulk_set_state": {
+      "name": "Bulk set state",
+      "description": "Set the state of every wardrobe item matching the given filters. Filters are combined with AND; omitted filters are ignored.",
+      "fields": {
+        "new_state": {
+          "name": "New state",
+          "description": "Target state to apply to every matching item."
+        },
+        "category": {
+          "name": "Category filter",
+          "description": "Only affect items in this category."
+        },
+        "laundry_type": {
+          "name": "Laundry-type filter",
+          "description": "Only affect items of this laundry type."
+        },
+        "current_state": {
+          "name": "Current-state filter",
+          "description": "Only affect items currently in this state."
         }
       }
     }

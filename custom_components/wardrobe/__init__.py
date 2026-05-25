@@ -5,20 +5,42 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 
 from .const import (
+    ATTR_FILTER_CATEGORY,
+    ATTR_FILTER_CURRENT_STATE,
+    ATTR_FILTER_LAUNDRY_TYPE,
+    ATTR_NEW_STATE,
+    CATEGORY_ICONS,
+    CONF_CATEGORY,
+    CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
     DOMAIN,
     EVENT_TAG_SCANNED,
+    LAUNDRY_TYPES,
     PLATFORMS,
+    SERVICE_BULK_SET_STATE,
+    STATES,
 )
 from .coordinator import WardrobeCoordinator
 
 __all__ = ["async_setup_entry", "async_unload_entry", "async_remove_entry"]
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_BULK_SET_STATE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_NEW_STATE): vol.In(STATES),
+        vol.Optional(ATTR_FILTER_CATEGORY): vol.In(list(CATEGORY_ICONS.keys())),
+        vol.Optional(ATTR_FILTER_LAUNDRY_TYPE): vol.In(LAUNDRY_TYPES),
+        vol.Optional(ATTR_FILTER_CURRENT_STATE): vol.In(STATES),
+    }
+)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -48,6 +70,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub = shared.get("unsub_tag_listener")
         if unsub is not None:
             unsub()
+        if shared.get("bulk_service_registered"):
+            hass.services.async_remove(DOMAIN, SERVICE_BULK_SET_STATE)
         hass.data[DOMAIN].pop("shared", None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN, None)
@@ -72,7 +96,7 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
-    """Create (or return) the shared coordinator and tag_scanned listener."""
+    """Create (or return) the shared coordinator, tag listener and bulk service."""
     bucket = hass.data.setdefault(DOMAIN, {})
     if "shared" in bucket:
         return bucket["shared"]
@@ -103,5 +127,40 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
     shared["unsub_tag_listener"] = hass.bus.async_listen(
         EVENT_TAG_SCANNED, _on_tag_scanned
     )
+
+    async def _async_bulk_set_state(call: ServiceCall) -> None:
+        new_state = call.data[ATTR_NEW_STATE]
+        cat_filter = call.data.get(ATTR_FILTER_CATEGORY)
+        lt_filter = call.data.get(ATTR_FILTER_LAUNDRY_TYPE)
+        cur_filter = call.data.get(ATTR_FILTER_CURRENT_STATE)
+
+        matched = 0
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if cat_filter and entry.data.get(CONF_CATEGORY) != cat_filter:
+                continue
+            if lt_filter and entry.data.get(CONF_LAUNDRY_TYPE) != lt_filter:
+                continue
+            if cur_filter and coordinator.get_state(entry.entry_id) != cur_filter:
+                continue
+            await coordinator.async_set_state(entry.entry_id, new_state)
+            matched += 1
+
+        _LOGGER.info(
+            "wardrobe.bulk_set_state: %d items → %s (cat=%s lt=%s cur=%s)",
+            matched,
+            new_state,
+            cat_filter,
+            lt_filter,
+            cur_filter,
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_BULK_SET_STATE,
+        _async_bulk_set_state,
+        schema=_BULK_SET_STATE_SCHEMA,
+    )
+    shared["bulk_service_registered"] = True
+
     bucket["shared"] = shared
     return shared

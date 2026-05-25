@@ -6,8 +6,12 @@ import pytest
 
 from custom_components.wardrobe.const import (
     CATEGORY_ICONS,
+    DEFAULT_LAUNDRY_TYPE,
+    LAUNDRY_TYPES,
     STATE_CYCLE,
     STATES,
+    STORAGE_VERSION,
+    LaundryType,
     WardrobeState,
     next_state,
 )
@@ -59,3 +63,19 @@ def test_category_icons_includes_baseline_categories() -> None:
     assert "other" in CATEGORY_ICONS
     for required in ("shirt", "pants", "shoes", "jacket"):
         assert required in CATEGORY_ICONS, f"missing baseline category {required!r}"
+
+
+def test_storage_version_is_two() -> None:
+    """v1.1 ships storage v2 — guards against accidental rollback."""
+    assert STORAGE_VERSION == 2
+
+
+def test_laundry_types_match_enum_values() -> None:
+    """LAUNDRY_TYPES should be the values of LaundryType, in spec'd order."""
+    assert LAUNDRY_TYPES == [lt.value for lt in LaundryType]
+    assert LAUNDRY_TYPES == ["dark", "light", "color", "delicates"]
+
+
+def test_default_laundry_type_is_a_valid_option() -> None:
+    """The default value used in the config flow must exist in LAUNDRY_TYPES."""
+    assert DEFAULT_LAUNDRY_TYPE in LAUNDRY_TYPES

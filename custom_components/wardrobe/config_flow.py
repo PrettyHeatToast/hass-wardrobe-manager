@@ -14,6 +14,9 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -24,8 +27,13 @@ from .const import (
     CATEGORY_ICONS,
     CONF_CATEGORY,
     CONF_ITEM_NAME,
+    CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
+    CONF_WEAR_THRESHOLD,
+    DEFAULT_LAUNDRY_TYPE,
+    DEFAULT_WEAR_THRESHOLD,
     DOMAIN,
+    LAUNDRY_TYPES,
 )
 
 
@@ -40,6 +48,29 @@ def _category_selector() -> SelectSelector:
     )
 
 
+def _laundry_type_selector() -> SelectSelector:
+    """Build the dropdown selector for the laundry-type field."""
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=LAUNDRY_TYPES,
+            translation_key="laundry_type",
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _wear_threshold_selector() -> NumberSelector:
+    """Build the numeric input for the wear-threshold field."""
+    return NumberSelector(
+        NumberSelectorConfig(
+            min=0,
+            max=999,
+            step=1,
+            mode=NumberSelectorMode.BOX,
+        )
+    )
+
+
 class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the user-initiated flow that adds a single wardrobe item."""
 
@@ -48,7 +79,7 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Collect the name, category and (optional) NFC tag for a new item."""
+        """Collect the name, category, laundry type and (optional) NFC tag."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -67,6 +98,10 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_ITEM_NAME: name,
                         CONF_CATEGORY: user_input[CONF_CATEGORY],
                         CONF_NFC_TAG_ID: tag,
+                        CONF_LAUNDRY_TYPE: user_input[CONF_LAUNDRY_TYPE],
+                        CONF_WEAR_THRESHOLD: int(
+                            user_input.get(CONF_WEAR_THRESHOLD, DEFAULT_WEAR_THRESHOLD)
+                        ),
                     },
                 )
 
@@ -81,6 +116,14 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_CATEGORY,
                     default=suggested.get(CONF_CATEGORY, "shirt"),
                 ): _category_selector(),
+                vol.Required(
+                    CONF_LAUNDRY_TYPE,
+                    default=suggested.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE),
+                ): _laundry_type_selector(),
+                vol.Optional(
+                    CONF_WEAR_THRESHOLD,
+                    default=suggested.get(CONF_WEAR_THRESHOLD, DEFAULT_WEAR_THRESHOLD),
+                ): _wear_threshold_selector(),
                 vol.Optional(
                     CONF_NFC_TAG_ID,
                     default=suggested.get(CONF_NFC_TAG_ID, ""),
@@ -109,7 +152,7 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class WardrobeOptionsFlow(OptionsFlow):
-    """Edit the category and NFC tag ID of a previously registered item."""
+    """Edit the category, laundry type, threshold and NFC tag of an item."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -128,6 +171,10 @@ class WardrobeOptionsFlow(OptionsFlow):
                     **self.config_entry.data,
                     CONF_CATEGORY: user_input[CONF_CATEGORY],
                     CONF_NFC_TAG_ID: tag,
+                    CONF_LAUNDRY_TYPE: user_input[CONF_LAUNDRY_TYPE],
+                    CONF_WEAR_THRESHOLD: int(
+                        user_input.get(CONF_WEAR_THRESHOLD, DEFAULT_WEAR_THRESHOLD)
+                    ),
                 }
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=new_data
@@ -141,6 +188,14 @@ class WardrobeOptionsFlow(OptionsFlow):
                     CONF_CATEGORY,
                     default=current.get(CONF_CATEGORY, "shirt"),
                 ): _category_selector(),
+                vol.Required(
+                    CONF_LAUNDRY_TYPE,
+                    default=current.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE),
+                ): _laundry_type_selector(),
+                vol.Optional(
+                    CONF_WEAR_THRESHOLD,
+                    default=current.get(CONF_WEAR_THRESHOLD, DEFAULT_WEAR_THRESHOLD),
+                ): _wear_threshold_selector(),
                 vol.Optional(
                     CONF_NFC_TAG_ID,
                     default=current.get(CONF_NFC_TAG_ID) or "",

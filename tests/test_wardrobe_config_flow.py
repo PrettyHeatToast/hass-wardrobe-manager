@@ -11,7 +11,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.wardrobe.const import (
     CONF_CATEGORY,
     CONF_ITEM_NAME,
+    CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
+    CONF_WEAR_THRESHOLD,
+    DEFAULT_LAUNDRY_TYPE,
     DOMAIN,
 )
 
@@ -29,6 +32,8 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
         user_input={
             CONF_ITEM_NAME: "Blue Shirt",
             CONF_CATEGORY: "shirt",
+            CONF_LAUNDRY_TYPE: "color",
+            CONF_WEAR_THRESHOLD: 5,
             CONF_NFC_TAG_ID: "04:AB:CD:EF",
         },
     )
@@ -38,6 +43,8 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
         CONF_ITEM_NAME: "Blue Shirt",
         CONF_CATEGORY: "shirt",
         CONF_NFC_TAG_ID: "04:AB:CD:EF",
+        CONF_LAUNDRY_TYPE: "color",
+        CONF_WEAR_THRESHOLD: 5,
     }
 
 
@@ -51,10 +58,13 @@ async def test_user_flow_allows_missing_tag(hass: HomeAssistant) -> None:
         user_input={
             CONF_ITEM_NAME: "Yellow Pants",
             CONF_CATEGORY: "pants",
+            CONF_LAUNDRY_TYPE: "light",
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_NFC_TAG_ID] is None
+    assert result["data"][CONF_LAUNDRY_TYPE] == "light"
+    assert result["data"][CONF_WEAR_THRESHOLD] == 0
 
 
 async def test_duplicate_name_aborts(hass: HomeAssistant) -> None:
@@ -67,6 +77,8 @@ async def test_duplicate_name_aborts(hass: HomeAssistant) -> None:
             CONF_ITEM_NAME: "Blue Shirt",
             CONF_CATEGORY: "shirt",
             CONF_NFC_TAG_ID: None,
+            CONF_LAUNDRY_TYPE: DEFAULT_LAUNDRY_TYPE,
+            CONF_WEAR_THRESHOLD: 0,
         },
     )
     existing.add_to_hass(hass)
@@ -79,6 +91,7 @@ async def test_duplicate_name_aborts(hass: HomeAssistant) -> None:
         user_input={
             CONF_ITEM_NAME: "Blue Shirt",
             CONF_CATEGORY: "shirt",
+            CONF_LAUNDRY_TYPE: DEFAULT_LAUNDRY_TYPE,
         },
     )
     assert result["type"] is FlowResultType.ABORT
@@ -95,6 +108,8 @@ async def test_duplicate_tag_shows_error(hass: HomeAssistant) -> None:
             CONF_ITEM_NAME: "Existing Item",
             CONF_CATEGORY: "shirt",
             CONF_NFC_TAG_ID: "04:AB:CD:EF",
+            CONF_LAUNDRY_TYPE: DEFAULT_LAUNDRY_TYPE,
+            CONF_WEAR_THRESHOLD: 0,
         },
     )
     existing.add_to_hass(hass)
@@ -107,6 +122,7 @@ async def test_duplicate_tag_shows_error(hass: HomeAssistant) -> None:
         user_input={
             CONF_ITEM_NAME: "New Item",
             CONF_CATEGORY: "shirt",
+            CONF_LAUNDRY_TYPE: DEFAULT_LAUNDRY_TYPE,
             CONF_NFC_TAG_ID: "04:AB:CD:EF",
         },
     )
@@ -115,7 +131,7 @@ async def test_duplicate_tag_shows_error(hass: HomeAssistant) -> None:
 
 
 async def test_options_flow_updates_entry_data(hass: HomeAssistant) -> None:
-    """OptionsFlow rewrites category and tag_id in the entry's data dict."""
+    """OptionsFlow rewrites category, laundry_type, threshold and tag_id."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Blue Shirt",
@@ -124,6 +140,8 @@ async def test_options_flow_updates_entry_data(hass: HomeAssistant) -> None:
             CONF_ITEM_NAME: "Blue Shirt",
             CONF_CATEGORY: "shirt",
             CONF_NFC_TAG_ID: None,
+            CONF_LAUNDRY_TYPE: "dark",
+            CONF_WEAR_THRESHOLD: 0,
         },
     )
     entry.add_to_hass(hass)
@@ -136,13 +154,16 @@ async def test_options_flow_updates_entry_data(hass: HomeAssistant) -> None:
         result["flow_id"],
         user_input={
             CONF_CATEGORY: "jacket",
+            CONF_LAUNDRY_TYPE: "delicates",
+            CONF_WEAR_THRESHOLD: 3,
             CONF_NFC_TAG_ID: "new-tag-123",
         },
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.data[CONF_CATEGORY] == "jacket"
+    assert entry.data[CONF_LAUNDRY_TYPE] == "delicates"
+    assert entry.data[CONF_WEAR_THRESHOLD] == 3
     assert entry.data[CONF_NFC_TAG_ID] == "new-tag-123"
-    # Name is untouched by the OptionsFlow.
     assert entry.data[CONF_ITEM_NAME] == "Blue Shirt"
 
 
@@ -156,6 +177,8 @@ async def test_options_flow_rejects_duplicate_tag(hass: HomeAssistant) -> None:
             CONF_ITEM_NAME: "Other",
             CONF_CATEGORY: "shirt",
             CONF_NFC_TAG_ID: "shared-tag",
+            CONF_LAUNDRY_TYPE: DEFAULT_LAUNDRY_TYPE,
+            CONF_WEAR_THRESHOLD: 0,
         },
     )
     other.add_to_hass(hass)
@@ -168,6 +191,8 @@ async def test_options_flow_rejects_duplicate_tag(hass: HomeAssistant) -> None:
             CONF_ITEM_NAME: "Target",
             CONF_CATEGORY: "shirt",
             CONF_NFC_TAG_ID: None,
+            CONF_LAUNDRY_TYPE: DEFAULT_LAUNDRY_TYPE,
+            CONF_WEAR_THRESHOLD: 0,
         },
     )
     target.add_to_hass(hass)
@@ -177,6 +202,7 @@ async def test_options_flow_rejects_duplicate_tag(hass: HomeAssistant) -> None:
         result["flow_id"],
         user_input={
             CONF_CATEGORY: "shirt",
+            CONF_LAUNDRY_TYPE: DEFAULT_LAUNDRY_TYPE,
             CONF_NFC_TAG_ID: "shared-tag",
         },
     )

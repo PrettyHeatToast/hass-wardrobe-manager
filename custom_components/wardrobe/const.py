@@ -8,22 +8,41 @@ from typing import Final
 from homeassistant.const import Platform
 
 DOMAIN: Final = "wardrobe"
-PLATFORMS: Final = [Platform.SELECT]
+PLATFORMS: Final = [Platform.SELECT, Platform.SENSOR, Platform.BINARY_SENSOR]
 
 STORAGE_KEY: Final = "wardrobe_states"
-STORAGE_VERSION: Final = 1
+STORAGE_VERSION: Final = 2
 
 CONF_ITEM_NAME: Final = "name"
 CONF_CATEGORY: Final = "category"
 CONF_NFC_TAG_ID: Final = "nfc_tag_id"
+CONF_LAUNDRY_TYPE: Final = "laundry_type"
+CONF_WEAR_THRESHOLD: Final = "wear_threshold"
+
+DEFAULT_WEAR_THRESHOLD: Final = 0
 
 EVENT_STATE_CHANGED: Final = "wardrobe_state_changed"
 EVENT_TAG_SCANNED: Final = "tag_scanned"
 
 SERVICE_CYCLE_STATE: Final = "cycle_state"
 SERVICE_SET_STATE: Final = "set_state"
+SERVICE_BULK_SET_STATE: Final = "bulk_set_state"
 
 ATTR_STATE: Final = "state"
+ATTR_NEW_STATE: Final = "new_state"
+ATTR_WEARS_SINCE_WASH: Final = "wears_since_wash"
+ATTR_WEAR_COUNT_TOTAL: Final = "wear_count_total"
+ATTR_LAST_WORN_AT: Final = "last_worn_at"
+ATTR_STATE_CHANGED_AT: Final = "state_changed_at"
+ATTR_BY_CATEGORY: Final = "by_category"
+ATTR_BY_LAUNDRY_TYPE: Final = "by_laundry_type"
+ATTR_ITEMS: Final = "items"
+ATTR_FILTER_CATEGORY: Final = "category"
+ATTR_FILTER_LAUNDRY_TYPE: Final = "laundry_type"
+ATTR_FILTER_CURRENT_STATE: Final = "current_state"
+
+SUMMARY_DEVICE_ID: Final = "summary"
+SUMMARY_DEVICE_NAME: Final = "Wardrobe Summary"
 
 
 class WardrobeState(StrEnum):
@@ -43,6 +62,20 @@ STATE_CYCLE: Final = {
 }
 
 DEFAULT_STATE: Final = WardrobeState.CLEAN.value
+
+
+class LaundryType(StrEnum):
+    """Wash-load sorting buckets used by the bulk service."""
+
+    DARK = "dark"
+    LIGHT = "light"
+    COLOR = "color"
+    DELICATES = "delicates"
+
+
+LAUNDRY_TYPES: Final = [lt.value for lt in LaundryType]
+DEFAULT_LAUNDRY_TYPE: Final = LaundryType.DARK.value
+
 
 CATEGORY_ICONS: Final[dict[str, str]] = {
     "shirt": "mdi:tshirt-crew",
