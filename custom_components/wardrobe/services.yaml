@@ -28,3 +28,69 @@ set_state:
             - worn
             - laundry
           translation_key: state
+
+bulk_set_state:
+  name: Bulk set state
+  description: >-
+    Set the state of every wardrobe item that matches the given filters.
+    Filters are combined with AND; omitted filters are ignored.
+  fields:
+    new_state:
+      name: New state
+      description: Target state to apply to every matching item.
+      required: true
+      example: clean
+      selector:
+        select:
+          options:
+            - clean
+            - worn
+            - laundry
+          translation_key: state
+    category:
+      name: Category filter
+      description: Only affect items in this category.
+      required: false
+      selector:
+        select:
+          options:
+            - shirt
+            - t_shirt
+            - pants
+            - jeans
+            - shorts
+            - skirt
+            - dress
+            - jacket
+            - coat
+            - sweater
+            - hoodie
+            - shoes
+            - socks
+            - hat
+            - scarf
+            - other
+          translation_key: category
+    laundry_type:
+      name: Laundry-type filter
+      description: Only affect items of this laundry type.
+      required: false
+      selector:
+        select:
+          options:
+            - dark
+            - light
+            - color
+            - delicates
+          translation_key: laundry_type
+    current_state:
+      name: Current-state filter
+      description: Only affect items currently in this state.
+      required: false
+      selector:
+        select:
+          options:
+            - clean
+            - worn
+            - laundry
+          translation_key: state
