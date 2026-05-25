@@ -1,0 +1,11 @@
+{
+  "domain": "wardrobe",
+  "name": "Wardrobe",
+  "version": "1.0.0",
+  "config_flow": true,
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "dependencies": ["tag"],
+  "codeowners": ["@wouthofman"],
+  "requirements": []
+}

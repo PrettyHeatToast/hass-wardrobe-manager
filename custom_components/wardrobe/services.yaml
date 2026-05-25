@@ -1,0 +1,30 @@
+cycle_state:
+  name: Cycle state
+  description: >-
+    Advance a wardrobe item to the next state in the cycle
+    (clean → worn → laundry → clean).
+  target:
+    entity:
+      integration: wardrobe
+      domain: select
+
+set_state:
+  name: Set state
+  description: Set a wardrobe item to a specific state.
+  target:
+    entity:
+      integration: wardrobe
+      domain: select
+  fields:
+    state:
+      name: State
+      description: Target state for the wardrobe item.
+      required: true
+      example: clean
+      selector:
+        select:
+          options:
+            - clean
+            - worn
+            - laundry
+          translation_key: state

@@ -1,0 +1,94 @@
+{
+  "title": "Wardrobe",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a wardrobe item",
+        "description": "Register a piece of clothing. The NFC tag ID is optional — you can add it later via the item's settings.",
+        "data": {
+          "name": "Name",
+          "category": "Category",
+          "nfc_tag_id": "NFC tag ID (optional)"
+        }
+      }
+    },
+    "error": {
+      "tag_exists": "Another wardrobe item already uses this NFC tag."
+    },
+    "abort": {
+      "already_configured": "A wardrobe item with this name already exists."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Edit wardrobe item",
+        "description": "Update the category or NFC tag ID for this item.",
+        "data": {
+          "category": "Category",
+          "nfc_tag_id": "NFC tag ID"
+        }
+      }
+    },
+    "error": {
+      "tag_exists": "Another wardrobe item already uses this NFC tag."
+    }
+  },
+  "entity": {
+    "select": {
+      "wardrobe_state": {
+        "name": "State",
+        "state": {
+          "clean": "Clean",
+          "worn": "Worn",
+          "laundry": "Laundry"
+        }
+      }
+    }
+  },
+  "selector": {
+    "category": {
+      "options": {
+        "shirt": "Shirt",
+        "t_shirt": "T-shirt",
+        "pants": "Pants",
+        "jeans": "Jeans",
+        "shorts": "Shorts",
+        "skirt": "Skirt",
+        "dress": "Dress",
+        "jacket": "Jacket",
+        "coat": "Coat",
+        "sweater": "Sweater",
+        "hoodie": "Hoodie",
+        "shoes": "Shoes",
+        "socks": "Socks",
+        "hat": "Hat",
+        "scarf": "Scarf",
+        "other": "Other"
+      }
+    },
+    "state": {
+      "options": {
+        "clean": "Clean",
+        "worn": "Worn",
+        "laundry": "Laundry"
+      }
+    }
+  },
+  "services": {
+    "cycle_state": {
+      "name": "Cycle state",
+      "description": "Advance a wardrobe item to the next state in the cycle (clean → worn → laundry → clean)."
+    },
+    "set_state": {
+      "name": "Set state",
+      "description": "Set a wardrobe item to a specific state.",
+      "fields": {
+        "state": {
+          "name": "State",
+          "description": "Target state for the wardrobe item."
+        }
+      }
+    }
+  }
+}
