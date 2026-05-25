@@ -76,7 +76,7 @@ def _coerce_record(value: Any) -> WardrobeRecord:
 class WardrobeStore(Store[dict[str, Any]]):
     """Store subclass that handles v1 → v2 migration."""
 
-    async def async_migrate_func(
+    async def _async_migrate_func(
         self,
         old_major_version: int,
         old_minor_version: int,
