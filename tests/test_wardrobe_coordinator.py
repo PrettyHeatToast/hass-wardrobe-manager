@@ -169,10 +169,13 @@ async def test_removing_entry_purges_storage(hass: HomeAssistant) -> None:
 async def test_last_entry_removal_tears_down_shared_bucket(
     hass: HomeAssistant,
 ) -> None:
-    """Removing the final entry should remove the shared singleton entirely."""
-    entry = await _setup_entry(hass, nfc_tag_id="only-tag")
+    """Removing every entry (item + auto-created hub) tears the bucket down."""
+    await _setup_entry(hass, nfc_tag_id="only-tag")
 
-    await hass.config_entries.async_remove(entry.entry_id)
+    # Adding an item auto-creates the summary hub via integration_discovery,
+    # so the bucket only tears down once both are gone.
+    for entry in list(hass.config_entries.async_entries(DOMAIN)):
+        await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
 
     assert "shared" not in hass.data.get(DOMAIN, {})
@@ -258,3 +261,119 @@ async def test_state_changed_at_updates_on_every_transition(
     later = coordinator.get_record(entry.entry_id)["state_changed_at"]
     assert later is not None and first is not None
     assert later > first
+
+
+async def test_threshold_zero_keeps_legacy_cycling(hass: HomeAssistant) -> None:
+    """With threshold=0 (disabled), every cycle advances state as before."""
+    entry = await _setup_entry(hass, wear_threshold=0)
+    coordinator = _get_coordinator(hass)
+
+    assert await coordinator.async_cycle_state(entry.entry_id) == "worn"
+    assert await coordinator.async_cycle_state(entry.entry_id) == "laundry"
+    assert await coordinator.async_cycle_state(entry.entry_id) == "clean"
+
+
+async def test_threshold_three_stays_worn_then_advances(
+    hass: HomeAssistant,
+) -> None:
+    """Threshold=3: scans 1-3 stay 'worn' bumping the counter; scan 4 → laundry."""
+    entry = await _setup_entry(hass, wear_threshold=3)
+    coordinator = _get_coordinator(hass)
+
+    # Scan 1: clean → worn (counter=1)
+    assert await coordinator.async_cycle_state(entry.entry_id) == "worn"
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["wears_since_wash"] == 1
+    assert rec["wear_count_total"] == 1
+
+    # Scan 2: stays worn (counter=2)
+    assert await coordinator.async_cycle_state(entry.entry_id) == "worn"
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["wears_since_wash"] == 2
+    assert rec["wear_count_total"] == 2
+
+    # Scan 3: stays worn (counter=3, threshold met)
+    assert await coordinator.async_cycle_state(entry.entry_id) == "worn"
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["wears_since_wash"] == 3
+    assert rec["wear_count_total"] == 3
+
+    # Scan 4: counter has reached threshold → advance to laundry; counter resets.
+    assert await coordinator.async_cycle_state(entry.entry_id) == "laundry"
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["state"] == "laundry"
+    assert rec["wears_since_wash"] == 0
+    # The "into the hamper" scan is not itself a wear.
+    assert rec["wear_count_total"] == 3
+
+
+async def test_threshold_one_advances_immediately_after_first_wear(
+    hass: HomeAssistant,
+) -> None:
+    """Threshold=1: scan 1 → worn (counter=1), scan 2 → laundry."""
+    entry = await _setup_entry(hass, wear_threshold=1)
+    coordinator = _get_coordinator(hass)
+
+    assert await coordinator.async_cycle_state(entry.entry_id) == "worn"
+    assert coordinator.get_record(entry.entry_id)["wears_since_wash"] == 1
+
+    assert await coordinator.async_cycle_state(entry.entry_id) == "laundry"
+    assert coordinator.get_record(entry.entry_id)["wears_since_wash"] == 0
+
+
+async def test_manual_set_state_bypasses_threshold(hass: HomeAssistant) -> None:
+    """Direct set_state(laundry) ignores the threshold gate."""
+    entry = await _setup_entry(hass, wear_threshold=5)
+    coordinator = _get_coordinator(hass)
+
+    await coordinator.async_cycle_state(entry.entry_id)  # clean → worn, wears=1
+    assert coordinator.get_record(entry.entry_id)["wears_since_wash"] == 1
+
+    await coordinator.async_set_state(entry.entry_id, "laundry")
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["state"] == "laundry"
+    assert rec["wears_since_wash"] == 0
+
+
+async def test_state_changed_at_unchanged_on_rewear(hass: HomeAssistant) -> None:
+    """A re-wear cycle bumps counters and last_worn_at, but not state_changed_at."""
+    entry = await _setup_entry(hass, wear_threshold=3)
+    coordinator = _get_coordinator(hass)
+
+    await coordinator.async_cycle_state(entry.entry_id)
+    state_changed_before = coordinator.get_record(entry.entry_id)["state_changed_at"]
+    last_worn_before = coordinator.get_record(entry.entry_id)["last_worn_at"]
+
+    await coordinator.async_cycle_state(entry.entry_id)  # re-wear
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["state_changed_at"] == state_changed_before
+    assert rec["last_worn_at"] is not None and last_worn_before is not None
+    assert rec["last_worn_at"] >= last_worn_before
+
+
+async def test_rewear_fires_state_changed_event(hass: HomeAssistant) -> None:
+    """A re-wear emits EVENT_STATE_CHANGED with old==new==worn and bumped counters."""
+    entry = await _setup_entry(hass, wear_threshold=3)
+    coordinator = _get_coordinator(hass)
+
+    await coordinator.async_cycle_state(entry.entry_id)  # initial worn
+
+    received: list[dict] = []
+
+    @callback
+    def _capture(event: Event) -> None:
+        received.append(event.data)
+
+    hass.bus.async_listen(EVENT_STATE_CHANGED, _capture)
+
+    await coordinator.async_cycle_state(entry.entry_id)  # re-wear
+    await hass.async_block_till_done()
+
+    assert len(received) == 1
+    payload = received[0]
+    assert payload["entry_id"] == entry.entry_id
+    assert payload["old_state"] == "worn"
+    assert payload["new_state"] == "worn"
+    assert payload[ATTR_WEARS_SINCE_WASH] == 2
+    assert payload[ATTR_WEAR_COUNT_TOTAL] == 2
+    assert payload[ATTR_LAST_WORN_AT] is not None

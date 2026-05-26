@@ -43,6 +43,10 @@ ATTR_FILTER_CURRENT_STATE: Final = "current_state"
 
 SUMMARY_DEVICE_ID: Final = "summary"
 SUMMARY_DEVICE_NAME: Final = "Wardrobe Summary"
+SUMMARY_HUB_UNIQUE_ID: Final = "_wardrobe_summary_hub"
+
+CONF_KIND: Final = "_kind"
+KIND_SUMMARY: Final = "summary"
 
 
 class WardrobeState(StrEnum):

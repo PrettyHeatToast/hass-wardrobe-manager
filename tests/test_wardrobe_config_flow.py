@@ -11,11 +11,13 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.wardrobe.const import (
     CONF_CATEGORY,
     CONF_ITEM_NAME,
+    CONF_KIND,
     CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
     CONF_WEAR_THRESHOLD,
     DEFAULT_LAUNDRY_TYPE,
     DOMAIN,
+    KIND_SUMMARY,
 )
 
 
@@ -165,6 +167,44 @@ async def test_options_flow_updates_entry_data(hass: HomeAssistant) -> None:
     assert entry.data[CONF_WEAR_THRESHOLD] == 3
     assert entry.data[CONF_NFC_TAG_ID] == "new-tag-123"
     assert entry.data[CONF_ITEM_NAME] == "Blue Shirt"
+
+
+async def test_integration_discovery_creates_singleton_hub(
+    hass: HomeAssistant,
+) -> None:
+    """The integration_discovery step creates exactly one Wardrobe Summary hub."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
+        data={},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Wardrobe Summary"
+    assert result["data"] == {CONF_KIND: KIND_SUMMARY}
+
+    # A second discovery must abort — only one hub may exist.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_INTEGRATION_DISCOVERY},
+        data={},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_options_flow_aborts_for_hub(hass: HomeAssistant) -> None:
+    """The Wardrobe Summary hub has no editable options."""
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        title="Wardrobe Summary",
+        unique_id="_wardrobe_summary_hub",
+        data={CONF_KIND: KIND_SUMMARY},
+    )
+    hub.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(hub.entry_id)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_options"
 
 
 async def test_options_flow_rejects_duplicate_tag(hass: HomeAssistant) -> None:

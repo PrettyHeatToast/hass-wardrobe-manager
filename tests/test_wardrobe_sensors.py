@@ -13,11 +13,13 @@ from custom_components.wardrobe.const import (
     ATTR_ITEMS,
     CONF_CATEGORY,
     CONF_ITEM_NAME,
+    CONF_KIND,
     CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
     CONF_WEAR_THRESHOLD,
     DEFAULT_LAUNDRY_TYPE,
     DOMAIN,
+    KIND_SUMMARY,
 )
 
 
@@ -141,6 +143,29 @@ async def test_summary_sensor_counts_and_breakdowns(hass: HomeAssistant) -> None
     assert state.attributes[ATTR_BY_CATEGORY] == {"shirt": 2, "pants": 1}
     assert state.attributes[ATTR_BY_LAUNDRY_TYPE] == {"dark": 2, "light": 1}
     assert state.attributes[ATTR_ITEMS] == ["Pants C", "Shirt A", "Shirt B"]
+
+
+async def test_summary_sensors_belong_to_hub_entry(hass: HomeAssistant) -> None:
+    """Summary entities are registered against the auto-created hub entry."""
+    await _setup_item(hass, name="Item Z")
+
+    hub_entries = [
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(CONF_KIND) == KIND_SUMMARY
+    ]
+    assert len(hub_entries) == 1
+    hub = hub_entries[0]
+
+    registry = er.async_get(hass)
+    for state in ("clean", "worn", "laundry"):
+        eid = registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{DOMAIN}_summary_{state}"
+        )
+        assert eid is not None
+        rec = registry.async_get(eid)
+        assert rec is not None
+        assert rec.config_entry_id == hub.entry_id
 
 
 async def test_summary_sensors_track_state_changes(hass: HomeAssistant) -> None:

@@ -23,9 +23,11 @@ from .const import (
     ATTR_ITEMS,
     CONF_CATEGORY,
     CONF_ITEM_NAME,
+    CONF_KIND,
     CONF_LAUNDRY_TYPE,
     DEFAULT_LAUNDRY_TYPE,
     DOMAIN,
+    KIND_SUMMARY,
     STATES,
     SUMMARY_DEVICE_ID,
     SUMMARY_DEVICE_NAME,
@@ -38,23 +40,23 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Add per-item sensors and (on first entry) the household summary sensors."""
-    shared = hass.data[DOMAIN]["shared"]
-    coordinator: WardrobeCoordinator = shared["coordinator"]
+    """Add the entities for either a single item or the summary hub."""
+    coordinator: WardrobeCoordinator = hass.data[DOMAIN]["shared"]["coordinator"]
 
-    entities: list[SensorEntity] = [
-        WearsSinceWashSensor(coordinator, entry),
-        WearCountTotalSensor(coordinator, entry),
-        LastWornAtSensor(coordinator, entry),
-        StateChangedAtSensor(coordinator, entry),
-    ]
+    if entry.data.get(CONF_KIND) == KIND_SUMMARY:
+        async_add_entities(
+            WardrobeSummaryCountSensor(coordinator, state) for state in STATES
+        )
+        return
 
-    if not shared.get("summary_added"):
-        shared["summary_added"] = True
-        for state in STATES:
-            entities.append(WardrobeSummaryCountSensor(coordinator, state))
-
-    async_add_entities(entities)
+    async_add_entities(
+        [
+            WearsSinceWashSensor(coordinator, entry),
+            WearCountTotalSensor(coordinator, entry),
+            LastWornAtSensor(coordinator, entry),
+            StateChangedAtSensor(coordinator, entry),
+        ]
+    )
 
 
 class _WardrobeItemSensorBase(CoordinatorEntity[WardrobeCoordinator], SensorEntity):

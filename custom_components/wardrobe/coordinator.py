@@ -16,7 +16,9 @@ from .const import (
     ATTR_WEAR_COUNT_TOTAL,
     ATTR_WEARS_SINCE_WASH,
     CONF_ITEM_NAME,
+    CONF_WEAR_THRESHOLD,
     DEFAULT_STATE,
+    DEFAULT_WEAR_THRESHOLD,
     DOMAIN,
     EVENT_STATE_CHANGED,
     STATES,
@@ -227,9 +229,76 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
             new_state,
         )
 
+    async def async_record_wear(self, entry_id: str) -> None:
+        """Record another wear without changing state.
+
+        Used when an item is scanned again while already in ``worn`` and the
+        per-item wear threshold has not yet been reached. Bumps the counters
+        and ``last_worn_at``, but leaves ``state`` and ``state_changed_at``
+        alone. Fires ``EVENT_STATE_CHANGED`` with ``old_state == new_state ==
+        "worn"`` so automations can react to re-wears.
+        """
+        rec = dict(self.data.get(entry_id) or _new_record())  # type: ignore[arg-type]
+        now_iso = dt_util.utcnow().isoformat()
+        rec["wears_since_wash"] = int(rec["wears_since_wash"]) + 1
+        rec["wear_count_total"] = int(rec["wear_count_total"]) + 1
+        rec["last_worn_at"] = now_iso
+
+        self.data[entry_id] = rec  # type: ignore[assignment]
+        await self._async_save()
+        self.async_set_updated_data(self.data)
+
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        name = entry.data.get(CONF_ITEM_NAME) if entry is not None else None
+        worn = WardrobeState.WORN.value
+        self.hass.bus.async_fire(
+            EVENT_STATE_CHANGED,
+            {
+                "entry_id": entry_id,
+                "name": name,
+                "old_state": worn,
+                "new_state": worn,
+                ATTR_WEARS_SINCE_WASH: rec["wears_since_wash"],
+                ATTR_WEAR_COUNT_TOTAL: rec["wear_count_total"],
+                ATTR_LAST_WORN_AT: rec["last_worn_at"],
+                ATTR_STATE_CHANGED_AT: rec["state_changed_at"],
+            },
+        )
+        _LOGGER.debug(
+            "Wardrobe re-wear recorded: %s (%s) wears_since_wash=%d",
+            name,
+            entry_id,
+            rec["wears_since_wash"],
+        )
+
+    def _wear_threshold(self, entry_id: str) -> int:
+        """Return the configured per-cycle wear threshold (0 if disabled)."""
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            return DEFAULT_WEAR_THRESHOLD
+        return int(
+            entry.data.get(CONF_WEAR_THRESHOLD, DEFAULT_WEAR_THRESHOLD) or 0
+        )
+
     async def async_cycle_state(self, entry_id: str) -> str:
-        """Advance an entry to its next state in the cycle."""
+        """Advance an entry to its next state, respecting the wear threshold.
+
+        Threshold disabled (``0``): cycle as usual on every call.
+
+        Threshold ``N > 0``: while in ``worn`` and ``wears_since_wash < N``,
+        record another wear (state stays ``worn``). The next call after the
+        threshold is reached transitions to ``laundry`` as normal.
+        """
         current = self.get_state(entry_id)
+        threshold = self._wear_threshold(entry_id)
+        if (
+            current == WardrobeState.WORN.value
+            and threshold > 0
+            and int(self.get_record(entry_id)["wears_since_wash"]) < threshold
+        ):
+            await self.async_record_wear(entry_id)
+            return current
+
         new = next_state(current)
         await self.async_set_state(entry_id, new)
         return new

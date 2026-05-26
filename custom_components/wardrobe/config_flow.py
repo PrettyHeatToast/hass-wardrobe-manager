@@ -27,13 +27,17 @@ from .const import (
     CATEGORY_ICONS,
     CONF_CATEGORY,
     CONF_ITEM_NAME,
+    CONF_KIND,
     CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
     CONF_WEAR_THRESHOLD,
     DEFAULT_LAUNDRY_TYPE,
     DEFAULT_WEAR_THRESHOLD,
     DOMAIN,
+    KIND_SUMMARY,
     LAUNDRY_TYPES,
+    SUMMARY_DEVICE_NAME,
+    SUMMARY_HUB_UNIQUE_ID,
 )
 
 
@@ -144,6 +148,21 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
                 return True
         return False
 
+    async def async_step_integration_discovery(
+        self, discovery_info: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Auto-create the singleton Wardrobe Summary hub entry.
+
+        Triggered from ``__init__.py`` when the first item entry is set up
+        without an existing hub. ``unique_id`` enforces single-instance.
+        """
+        await self.async_set_unique_id(SUMMARY_HUB_UNIQUE_ID)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title=SUMMARY_DEVICE_NAME,
+            data={CONF_KIND: KIND_SUMMARY},
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> WardrobeOptionsFlow:
@@ -158,6 +177,9 @@ class WardrobeOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Show the edit form and persist changes back to ``entry.data``."""
+        if self.config_entry.data.get(CONF_KIND) == KIND_SUMMARY:
+            return self.async_abort(reason="no_options")
+
         errors: dict[str, str] = {}
 
         if user_input is not None:

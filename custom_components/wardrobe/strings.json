@@ -36,6 +36,9 @@
     },
     "error": {
       "tag_exists": "Another wardrobe item already uses this NFC tag."
+    },
+    "abort": {
+      "no_options": "The Wardrobe Summary device has no configurable options."
     }
   },
   "entity": {
