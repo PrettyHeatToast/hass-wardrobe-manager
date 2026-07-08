@@ -1,44 +1,182 @@
 {
-  "title": "Wardrobe",
   "config": {
     "step": {
       "user": {
-        "title": "Add a wardrobe item",
-        "description": "Register a piece of clothing. The NFC tag ID is optional — you can add it later via the item's settings.",
+        "title": "Add a clothing item",
+        "description": "Give the garment a name and tell us how it is washed.",
         "data": {
           "name": "Name",
           "category": "Category",
-          "laundry_type": "Laundry type",
-          "wear_threshold": "Wear threshold (0 = disabled)",
-          "nfc_tag_id": "NFC tag ID (optional)"
+          "laundry_type": "Laundry type"
+        }
+      },
+      "tracking": {
+        "title": "Tracking",
+        "description": "Attach an NFC tag and choose how scans and wash cycles behave.",
+        "data": {
+          "nfc_tag_id": "NFC tag ID",
+          "scan_action": "When the tag is scanned",
+          "extra_states": "Extra states",
+          "wear_threshold": "Wears per wash cycle (0 = off)"
+        }
+      },
+      "details": {
+        "title": "Details (optional)",
+        "description": "Everything here is optional — fill in what you want on your dashboards.",
+        "data": {
+          "brand": "Brand",
+          "size": "Size",
+          "color": "Color",
+          "material": "Material",
+          "seasons": "Seasons",
+          "location": "Storage location",
+          "purchase_date": "Purchase date",
+          "purchase_price": "Purchase price",
+          "notes": "Notes"
         }
       }
     },
     "error": {
-      "tag_exists": "Another wardrobe item already uses this NFC tag."
+      "name_required": "Please enter a name.",
+      "tag_exists": "This NFC tag is already assigned to another item."
     },
     "abort": {
-      "already_configured": "A wardrobe item with this name already exists."
+      "already_configured": "An item with this name already exists."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Edit wardrobe item",
-        "description": "Update the category, laundry type, wear threshold or NFC tag ID for this item.",
+        "title": "Edit item",
+        "menu_options": {
+          "basics": "Basics (category, laundry type)",
+          "tracking": "Tracking (NFC tag, scan action, extra states)",
+          "details": "Details (brand, size, purchase info, …)"
+        },
+        "data": {
+          "load_size": "Items per laundry load"
+        }
+      },
+      "basics": {
+        "title": "Basics",
         "data": {
           "category": "Category",
-          "laundry_type": "Laundry type",
-          "wear_threshold": "Wear threshold (0 = disabled)",
-          "nfc_tag_id": "NFC tag ID"
+          "laundry_type": "Laundry type"
+        }
+      },
+      "tracking": {
+        "title": "Tracking",
+        "description": "The wear threshold is adjusted via the item's number entity.",
+        "data": {
+          "nfc_tag_id": "NFC tag ID",
+          "scan_action": "When the tag is scanned",
+          "extra_states": "Extra states"
+        }
+      },
+      "details": {
+        "title": "Details",
+        "data": {
+          "brand": "Brand",
+          "size": "Size",
+          "color": "Color",
+          "material": "Material",
+          "seasons": "Seasons",
+          "location": "Storage location",
+          "purchase_date": "Purchase date",
+          "purchase_price": "Purchase price",
+          "notes": "Notes"
         }
       }
     },
     "error": {
-      "tag_exists": "Another wardrobe item already uses this NFC tag."
+      "tag_exists": "This NFC tag is already assigned to another item."
+    }
+  },
+  "selector": {
+    "state": {
+      "options": {
+        "clean": "Clean",
+        "worn": "Worn",
+        "laundry": "In laundry basket",
+        "washing": "Washing",
+        "drying": "Drying",
+        "ironing": "Ironing",
+        "repair": "In repair",
+        "storage": "In storage"
+      }
     },
-    "abort": {
-      "no_options": "The Wardrobe Summary device has no configurable options."
+    "category": {
+      "options": {
+        "t_shirt": "T-shirt",
+        "shirt": "Shirt",
+        "polo": "Polo",
+        "blouse": "Blouse",
+        "sweater": "Sweater",
+        "hoodie": "Hoodie",
+        "cardigan": "Cardigan",
+        "jacket": "Jacket",
+        "coat": "Coat",
+        "blazer": "Blazer",
+        "suit": "Suit",
+        "dress": "Dress",
+        "skirt": "Skirt",
+        "pants": "Pants",
+        "jeans": "Jeans",
+        "shorts": "Shorts",
+        "leggings": "Leggings",
+        "underwear": "Underwear",
+        "socks": "Socks",
+        "pajamas": "Pajamas",
+        "sportswear": "Sportswear",
+        "swimwear": "Swimwear",
+        "shoes": "Shoes",
+        "sneakers": "Sneakers",
+        "boots": "Boots",
+        "sandals": "Sandals",
+        "hat": "Hat",
+        "cap": "Cap",
+        "scarf": "Scarf",
+        "gloves": "Gloves",
+        "belt": "Belt",
+        "tie": "Tie",
+        "accessory": "Accessory",
+        "other": "Other"
+      }
+    },
+    "laundry_type": {
+      "options": {
+        "dark": "Dark",
+        "light": "Light",
+        "color": "Color",
+        "delicates": "Delicates",
+        "wool": "Wool",
+        "hand_wash": "Hand wash"
+      }
+    },
+    "scan_action": {
+      "options": {
+        "cycle": "Cycle to the next state",
+        "mark_worn": "Mark as worn",
+        "mark_washed": "Mark as washed"
+      }
+    },
+    "extra_states": {
+      "options": {
+        "washing": "Washing (in the machine)",
+        "drying": "Drying",
+        "ironing": "Ironing",
+        "repair": "In repair",
+        "storage": "Seasonal storage"
+      }
+    },
+    "seasons": {
+      "options": {
+        "spring": "Spring",
+        "summer": "Summer",
+        "autumn": "Autumn",
+        "winter": "Winter",
+        "all_year": "All year"
+      }
     }
   },
   "entity": {
@@ -48,112 +186,52 @@
         "state": {
           "clean": "Clean",
           "worn": "Worn",
-          "laundry": "Laundry"
+          "laundry": "In laundry basket",
+          "washing": "Washing",
+          "drying": "Drying",
+          "ironing": "Ironing",
+          "repair": "In repair",
+          "storage": "In storage"
         }
       }
     },
     "sensor": {
-      "wears_since_wash": {
-        "name": "Wears since wash"
-      },
-      "wear_count_total": {
-        "name": "Total wears"
-      },
-      "last_worn_at": {
-        "name": "Last worn"
-      },
-      "state_changed_at": {
-        "name": "State changed at"
-      },
-      "summary_clean": {
-        "name": "Clean items"
-      },
-      "summary_worn": {
-        "name": "Worn items"
-      },
-      "summary_laundry": {
-        "name": "Laundry items"
-      }
+      "wears_since_wash": { "name": "Wears since wash" },
+      "wear_count_total": { "name": "Total wears" },
+      "wash_count": { "name": "Wash count" },
+      "last_worn_at": { "name": "Last worn" },
+      "last_washed_at": { "name": "Last washed" },
+      "state_changed_at": { "name": "Last state change" },
+      "cost_per_wear": { "name": "Cost per wear" },
+      "summary_clean": { "name": "Clean items" },
+      "summary_worn": { "name": "Worn items" },
+      "summary_laundry": { "name": "Items in laundry basket" },
+      "summary_in_wash": { "name": "Items being washed" },
+      "summary_total": { "name": "Total items" },
+      "summary_needs_washing": { "name": "Items needing wash" },
+      "load_dark": { "name": "Dark load" },
+      "load_light": { "name": "Light load" },
+      "load_color": { "name": "Color load" },
+      "load_delicates": { "name": "Delicates load" },
+      "load_wool": { "name": "Wool load" },
+      "load_hand_wash": { "name": "Hand-wash load" }
     },
     "binary_sensor": {
-      "needs_washing": {
-        "name": "Needs washing"
-      }
-    }
-  },
-  "selector": {
-    "category": {
-      "options": {
-        "shirt": "Shirt",
-        "t_shirt": "T-shirt",
-        "pants": "Pants",
-        "jeans": "Jeans",
-        "shorts": "Shorts",
-        "skirt": "Skirt",
-        "dress": "Dress",
-        "jacket": "Jacket",
-        "coat": "Coat",
-        "sweater": "Sweater",
-        "hoodie": "Hoodie",
-        "shoes": "Shoes",
-        "socks": "Socks",
-        "hat": "Hat",
-        "scarf": "Scarf",
-        "other": "Other"
-      }
+      "needs_washing": { "name": "Needs washing" },
+      "load_ready_dark": { "name": "Dark load ready" },
+      "load_ready_light": { "name": "Light load ready" },
+      "load_ready_color": { "name": "Color load ready" },
+      "load_ready_delicates": { "name": "Delicates load ready" },
+      "load_ready_wool": { "name": "Wool load ready" },
+      "load_ready_hand_wash": { "name": "Hand-wash load ready" }
     },
-    "state": {
-      "options": {
-        "clean": "Clean",
-        "worn": "Worn",
-        "laundry": "Laundry"
-      }
+    "button": {
+      "mark_worn": { "name": "I wore this" },
+      "mark_washed": { "name": "Washed" },
+      "complete_wash": { "name": "Complete wash cycle" }
     },
-    "laundry_type": {
-      "options": {
-        "dark": "Dark",
-        "light": "Light",
-        "color": "Color",
-        "delicates": "Delicates"
-      }
-    }
-  },
-  "services": {
-    "cycle_state": {
-      "name": "Cycle state",
-      "description": "Advance a wardrobe item to the next state in the cycle (clean → worn → laundry → clean)."
-    },
-    "set_state": {
-      "name": "Set state",
-      "description": "Set a wardrobe item to a specific state.",
-      "fields": {
-        "state": {
-          "name": "State",
-          "description": "Target state for the wardrobe item."
-        }
-      }
-    },
-    "bulk_set_state": {
-      "name": "Bulk set state",
-      "description": "Set the state of every wardrobe item matching the given filters. Filters are combined with AND; omitted filters are ignored.",
-      "fields": {
-        "new_state": {
-          "name": "New state",
-          "description": "Target state to apply to every matching item."
-        },
-        "category": {
-          "name": "Category filter",
-          "description": "Only affect items in this category."
-        },
-        "laundry_type": {
-          "name": "Laundry-type filter",
-          "description": "Only affect items of this laundry type."
-        },
-        "current_state": {
-          "name": "Current-state filter",
-          "description": "Only affect items currently in this state."
-        }
-      }
+    "number": {
+      "wear_threshold": { "name": "Wears per wash cycle" }
     }
   }
 }

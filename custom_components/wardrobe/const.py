@@ -8,45 +8,102 @@ from typing import Final
 from homeassistant.const import Platform
 
 DOMAIN: Final = "wardrobe"
-PLATFORMS: Final = [Platform.SELECT, Platform.SENSOR, Platform.BINARY_SENSOR]
+
+# Platforms forwarded for a normal clothing-item entry.
+PLATFORMS: Final = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.SENSOR,
+]
+
+# Platforms forwarded for the singleton summary hub entry.
+HUB_PLATFORMS: Final = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SENSOR,
+]
 
 STORAGE_KEY: Final = "wardrobe_states"
-STORAGE_VERSION: Final = 2
+STORAGE_VERSION: Final = 3
+
+# ---------------------------------------------------------------------------
+# ConfigEntry data keys
+# ---------------------------------------------------------------------------
 
 CONF_ITEM_NAME: Final = "name"
 CONF_CATEGORY: Final = "category"
 CONF_NFC_TAG_ID: Final = "nfc_tag_id"
 CONF_LAUNDRY_TYPE: Final = "laundry_type"
 CONF_WEAR_THRESHOLD: Final = "wear_threshold"
+CONF_SCAN_ACTION: Final = "scan_action"
+CONF_EXTRA_STATES: Final = "extra_states"
+CONF_BRAND: Final = "brand"
+CONF_SIZE: Final = "size"
+CONF_COLOR: Final = "color"
+CONF_MATERIAL: Final = "material"
+CONF_SEASONS: Final = "seasons"
+CONF_LOCATION: Final = "location"
+CONF_PURCHASE_DATE: Final = "purchase_date"
+CONF_PURCHASE_PRICE: Final = "purchase_price"
+CONF_NOTES: Final = "notes"
 
-DEFAULT_WEAR_THRESHOLD: Final = 0
+# Hub option keys
+CONF_LOAD_SIZE: Final = "load_size"
+DEFAULT_LOAD_SIZE: Final = 5
 
-EVENT_STATE_CHANGED: Final = "wardrobe_state_changed"
-EVENT_TAG_SCANNED: Final = "tag_scanned"
+DEFAULT_WEAR_THRESHOLD: Final = 0  # 0 disables threshold-aware cycling
 
-SERVICE_CYCLE_STATE: Final = "cycle_state"
-SERVICE_SET_STATE: Final = "set_state"
-SERVICE_BULK_SET_STATE: Final = "bulk_set_state"
-
-ATTR_STATE: Final = "state"
-ATTR_NEW_STATE: Final = "new_state"
-ATTR_WEARS_SINCE_WASH: Final = "wears_since_wash"
-ATTR_WEAR_COUNT_TOTAL: Final = "wear_count_total"
-ATTR_LAST_WORN_AT: Final = "last_worn_at"
-ATTR_STATE_CHANGED_AT: Final = "state_changed_at"
-ATTR_BY_CATEGORY: Final = "by_category"
-ATTR_BY_LAUNDRY_TYPE: Final = "by_laundry_type"
-ATTR_ITEMS: Final = "items"
-ATTR_FILTER_CATEGORY: Final = "category"
-ATTR_FILTER_LAUNDRY_TYPE: Final = "laundry_type"
-ATTR_FILTER_CURRENT_STATE: Final = "current_state"
+# Marker distinguishing the summary hub entry from item entries.
+CONF_KIND: Final = "_kind"
+KIND_SUMMARY: Final = "summary"
 
 SUMMARY_DEVICE_ID: Final = "summary"
 SUMMARY_DEVICE_NAME: Final = "Wardrobe Summary"
 SUMMARY_HUB_UNIQUE_ID: Final = "_wardrobe_summary_hub"
 
-CONF_KIND: Final = "_kind"
-KIND_SUMMARY: Final = "summary"
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+EVENT_STATE_CHANGED: Final = "wardrobe_state_changed"
+EVENT_NEEDS_WASH: Final = "wardrobe_needs_wash"
+EVENT_WASH_COMPLETED: Final = "wardrobe_wash_completed"
+EVENT_TAG_SCANNED: Final = "tag_scanned"  # fired by HA's built-in tag integration
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+
+SERVICE_CYCLE_STATE: Final = "cycle_state"
+SERVICE_SET_STATE: Final = "set_state"
+SERVICE_MARK_WORN: Final = "mark_worn"
+SERVICE_MARK_WASHED: Final = "mark_washed"
+SERVICE_RESET_STATISTICS: Final = "reset_statistics"
+SERVICE_BULK_SET_STATE: Final = "bulk_set_state"
+SERVICE_WASH_LOAD: Final = "wash_load"
+
+ATTR_STATE: Final = "state"
+ATTR_NEW_STATE: Final = "new_state"
+ATTR_WEARS_SINCE_WASH: Final = "wears_since_wash"
+ATTR_WEAR_COUNT_TOTAL: Final = "wear_count_total"
+ATTR_WASH_COUNT: Final = "wash_count"
+ATTR_LAST_WORN_AT: Final = "last_worn_at"
+ATTR_LAST_WASHED_AT: Final = "last_washed_at"
+ATTR_STATE_CHANGED_AT: Final = "state_changed_at"
+ATTR_THRESHOLD: Final = "threshold"
+ATTR_ITEMS: Final = "items"
+ATTR_BY_CATEGORY: Final = "by_category"
+ATTR_BY_LAUNDRY_TYPE: Final = "by_laundry_type"
+ATTR_FILTER_CATEGORY: Final = "category"
+ATTR_FILTER_LAUNDRY_TYPE: Final = "laundry_type"
+ATTR_FILTER_CURRENT_STATE: Final = "current_state"
+
+
+# ---------------------------------------------------------------------------
+# States
+# ---------------------------------------------------------------------------
 
 
 class WardrobeState(StrEnum):
@@ -55,59 +112,177 @@ class WardrobeState(StrEnum):
     CLEAN = "clean"
     WORN = "worn"
     LAUNDRY = "laundry"
+    WASHING = "washing"
+    DRYING = "drying"
+    IRONING = "ironing"
+    REPAIR = "repair"
+    STORAGE = "storage"
 
 
-STATES: Final = [state.value for state in WardrobeState]
+# The core cycle every item participates in.
+CORE_CYCLE: Final[list[str]] = [
+    WardrobeState.CLEAN.value,
+    WardrobeState.WORN.value,
+    WardrobeState.LAUNDRY.value,
+]
 
-STATE_CYCLE: Final = {
-    WardrobeState.CLEAN.value: WardrobeState.WORN.value,
-    WardrobeState.WORN.value: WardrobeState.LAUNDRY.value,
-    WardrobeState.LAUNDRY.value: WardrobeState.CLEAN.value,
-}
+# Optional pipeline states, inserted between laundry and clean in this order.
+PIPELINE_STATES: Final[list[str]] = [
+    WardrobeState.WASHING.value,
+    WardrobeState.DRYING.value,
+    WardrobeState.IRONING.value,
+]
+
+# Optional parked states: selectable but outside the cycle. Cycling from a
+# parked state returns the item to clean.
+PARKED_STATES: Final[list[str]] = [
+    WardrobeState.REPAIR.value,
+    WardrobeState.STORAGE.value,
+]
+
+# Extra states a user may enable per item (pipeline + parked).
+EXTRA_STATES: Final[list[str]] = PIPELINE_STATES + PARKED_STATES
+
+ALL_STATES: Final[list[str]] = CORE_CYCLE + PIPELINE_STATES + PARKED_STATES
+
+# States meaning "this item is dirty / being washed". Transitioning from one
+# of these into clean counts as a completed wash.
+DIRTY_STATES: Final[frozenset[str]] = frozenset(
+    [WardrobeState.LAUNDRY.value, *PIPELINE_STATES]
+)
 
 DEFAULT_STATE: Final = WardrobeState.CLEAN.value
 
 
+def build_cycle(extra_states: list[str] | None = None) -> list[str]:
+    """Return the ordered state cycle for an item.
+
+    Pure function with no HA dependencies — kept here so tests can exercise
+    the cycle without standing up a HomeAssistant instance. Parked states
+    (repair/storage) never join the cycle.
+    """
+    extras = set(extra_states or [])
+    cycle = list(CORE_CYCLE)
+    cycle.extend(s for s in PIPELINE_STATES if s in extras)
+    return cycle
+
+
+def next_state_in(cycle: list[str], current: str) -> str:
+    """Return the state following ``current`` in ``cycle``.
+
+    States outside the cycle (parked states, or pipeline states that were
+    disabled after the item entered them) resolve to clean.
+    """
+    try:
+        idx = cycle.index(current)
+    except ValueError:
+        return DEFAULT_STATE
+    return cycle[(idx + 1) % len(cycle)]
+
+
+def selectable_states(extra_states: list[str] | None = None) -> list[str]:
+    """Return the states offered by an item's select entity."""
+    extras = set(extra_states or [])
+    return build_cycle(extra_states) + [s for s in PARKED_STATES if s in extras]
+
+
+# ---------------------------------------------------------------------------
+# Scan actions
+# ---------------------------------------------------------------------------
+
+
+class ScanAction(StrEnum):
+    """What scanning an item's NFC tag does."""
+
+    CYCLE = "cycle"
+    MARK_WORN = "mark_worn"
+    MARK_WASHED = "mark_washed"
+
+
+SCAN_ACTIONS: Final = [action.value for action in ScanAction]
+DEFAULT_SCAN_ACTION: Final = ScanAction.CYCLE.value
+
+
+# ---------------------------------------------------------------------------
+# Laundry types
+# ---------------------------------------------------------------------------
+
+
 class LaundryType(StrEnum):
-    """Wash-load sorting buckets used by the bulk service."""
+    """Wash-load sorting buckets."""
 
     DARK = "dark"
     LIGHT = "light"
     COLOR = "color"
     DELICATES = "delicates"
+    WOOL = "wool"
+    HAND_WASH = "hand_wash"
 
 
 LAUNDRY_TYPES: Final = [lt.value for lt in LaundryType]
 DEFAULT_LAUNDRY_TYPE: Final = LaundryType.DARK.value
 
 
+# ---------------------------------------------------------------------------
+# Seasons
+# ---------------------------------------------------------------------------
+
+SEASONS: Final[list[str]] = ["spring", "summer", "autumn", "winter", "all_year"]
+
+
+# ---------------------------------------------------------------------------
+# Categories & icons
+# ---------------------------------------------------------------------------
+
 CATEGORY_ICONS: Final[dict[str, str]] = {
-    "shirt": "mdi:tshirt-crew",
-    "t_shirt": "mdi:tshirt-v",
+    "t_shirt": "mdi:tshirt-crew",
+    "shirt": "mdi:tshirt-crew-outline",
+    "polo": "mdi:tshirt-v",
+    "blouse": "mdi:tshirt-v-outline",
+    "sweater": "mdi:tshirt-crew",
+    "hoodie": "mdi:tshirt-crew",
+    "cardigan": "mdi:tshirt-v",
+    "jacket": "mdi:coat-rack",
+    "coat": "mdi:coat-rack",
+    "blazer": "mdi:coat-rack",
+    "suit": "mdi:account-tie",
+    "dress": "mdi:hanger",
+    "skirt": "mdi:hanger",
     "pants": "mdi:hanger",
     "jeans": "mdi:hanger",
     "shorts": "mdi:hanger",
-    "skirt": "mdi:hanger",
-    "dress": "mdi:hanger",
-    "jacket": "mdi:coat-rack",
-    "coat": "mdi:coat-rack",
-    "sweater": "mdi:tshirt-crew",
-    "hoodie": "mdi:tshirt-crew",
-    "shoes": "mdi:shoe-formal",
+    "leggings": "mdi:hanger",
+    "underwear": "mdi:hanger",
     "socks": "mdi:sock",
+    "pajamas": "mdi:bed",
+    "sportswear": "mdi:run",
+    "swimwear": "mdi:swim",
+    "shoes": "mdi:shoe-formal",
+    "sneakers": "mdi:shoe-sneaker",
+    "boots": "mdi:shoe-print",
+    "sandals": "mdi:shoe-print",
     "hat": "mdi:hat-fedora",
-    "scarf": "mdi:scarf",
+    "cap": "mdi:hat-fedora",
+    "scarf": "mdi:hanger",
+    "gloves": "mdi:hand-back-right",
+    "belt": "mdi:hanger",
+    "tie": "mdi:tie",
+    "accessory": "mdi:bag-personal",
     "other": "mdi:hanger",
 }
 
-LAUNDRY_ICON: Final = "mdi:washing-machine"
+CATEGORIES: Final[list[str]] = list(CATEGORY_ICONS.keys())
+DEFAULT_CATEGORY: Final = "t_shirt"
+
+# State-specific icons shown by the select entity when the item is not
+# simply clean/worn (those show the category icon).
+STATE_ICONS: Final[dict[str, str]] = {
+    WardrobeState.LAUNDRY.value: "mdi:basket",
+    WardrobeState.WASHING.value: "mdi:washing-machine",
+    WardrobeState.DRYING.value: "mdi:tumble-dryer",
+    WardrobeState.IRONING.value: "mdi:iron",
+    WardrobeState.REPAIR.value: "mdi:needle",
+    WardrobeState.STORAGE.value: "mdi:package-variant-closed",
+}
+
 DEFAULT_ICON: Final = "mdi:hanger"
-
-
-def next_state(current: str) -> str:
-    """Return the next state in the wardrobe cycle.
-
-    Pure function with no HA dependencies — kept here so tests can exercise
-    the cycle without standing up a HomeAssistant instance.
-    """
-    return STATE_CYCLE[current]

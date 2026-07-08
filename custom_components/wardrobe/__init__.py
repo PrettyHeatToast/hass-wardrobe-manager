@@ -10,30 +10,35 @@ import voluptuous as vol
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .const import (
+    ALL_STATES,
     ATTR_FILTER_CATEGORY,
     ATTR_FILTER_CURRENT_STATE,
     ATTR_FILTER_LAUNDRY_TYPE,
+    ATTR_ITEMS,
     ATTR_NEW_STATE,
-    CATEGORY_ICONS,
+    CATEGORIES,
     CONF_CATEGORY,
+    CONF_ITEM_NAME,
     CONF_KIND,
     CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
+    CONF_SCAN_ACTION,
+    DEFAULT_SCAN_ACTION,
+    DIRTY_STATES,
     DOMAIN,
     EVENT_TAG_SCANNED,
+    EVENT_WASH_COMPLETED,
+    HUB_PLATFORMS,
     KIND_SUMMARY,
     LAUNDRY_TYPES,
     PLATFORMS,
     SERVICE_BULK_SET_STATE,
-    STATES,
-    SUMMARY_DEVICE_ID,
+    SERVICE_WASH_LOAD,
+    ScanAction,
 )
 from .coordinator import WardrobeCoordinator
-
-HUB_PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 __all__ = ["async_setup_entry", "async_unload_entry", "async_remove_entry"]
 
@@ -42,10 +47,16 @@ _LOGGER = logging.getLogger(__name__)
 
 _BULK_SET_STATE_SCHEMA = vol.Schema(
     {
-        vol.Required(ATTR_NEW_STATE): vol.In(STATES),
-        vol.Optional(ATTR_FILTER_CATEGORY): vol.In(list(CATEGORY_ICONS.keys())),
+        vol.Required(ATTR_NEW_STATE): vol.In(ALL_STATES),
+        vol.Optional(ATTR_FILTER_CATEGORY): vol.In(CATEGORIES),
         vol.Optional(ATTR_FILTER_LAUNDRY_TYPE): vol.In(LAUNDRY_TYPES),
-        vol.Optional(ATTR_FILTER_CURRENT_STATE): vol.In(STATES),
+        vol.Optional(ATTR_FILTER_CURRENT_STATE): vol.In(ALL_STATES),
+    }
+)
+
+_WASH_LOAD_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_FILTER_LAUNDRY_TYPE): vol.In(LAUNDRY_TYPES),
     }
 )
 
@@ -68,40 +79,9 @@ def _existing_hub(hass: HomeAssistant) -> ConfigEntry | None:
     return None
 
 
-def _migrate_summary_to_hub(hass: HomeAssistant, hub_entry_id: str) -> None:
-    """Reassociate any pre-1.2 summary entities to the new hub ConfigEntry.
-
-    Before v1.2 the summary sensors were added inside an item entry's setup,
-    so the entity_registry rows + the summary device were linked to whichever
-    item happened to set up first. This rewrites both so the summary device
-    belongs only to the hub.
-    """
-    ent_reg = er.async_get(hass)
-    dev_reg = dr.async_get(hass)
-    moved_from: set[str] = set()
-
-    for state in STATES:
-        unique_id = f"{DOMAIN}_summary_{state}"
-        eid = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
-        if eid is None:
-            continue
-        rec = ent_reg.async_get(eid)
-        if rec is None or rec.config_entry_id == hub_entry_id:
-            continue
-        if rec.config_entry_id:
-            moved_from.add(rec.config_entry_id)
-        ent_reg.async_update_entity(eid, config_entry_id=hub_entry_id)
-
-    summary_device = dev_reg.async_get_device(
-        identifiers={(DOMAIN, SUMMARY_DEVICE_ID)}
-    )
-    if summary_device is None:
-        return
-    for old_cfg in moved_from:
-        if old_cfg in summary_device.config_entries:
-            dev_reg.async_update_device(
-                summary_device.id, remove_config_entry_id=old_cfg
-            )
+def _item_entries(hass: HomeAssistant) -> list[ConfigEntry]:
+    """Return all non-hub (clothing item) entries."""
+    return [e for e in hass.config_entries.async_entries(DOMAIN) if not _is_hub(e)]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -110,8 +90,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     shared["entry_ids"].add(entry.entry_id)
 
     if _is_hub(entry):
-        _migrate_summary_to_hub(hass, entry.entry_id)
         await hass.config_entries.async_forward_entry_setups(entry, HUB_PLATFORMS)
+        entry.async_on_unload(entry.add_update_listener(_async_options_updated))
         return True
 
     coordinator: WardrobeCoordinator = shared["coordinator"]
@@ -145,8 +125,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unsub = shared.get("unsub_tag_listener")
         if unsub is not None:
             unsub()
-        if shared.get("bulk_service_registered"):
-            hass.services.async_remove(DOMAIN, SERVICE_BULK_SET_STATE)
+        for service in (SERVICE_BULK_SET_STATE, SERVICE_WASH_LOAD):
+            hass.services.async_remove(DOMAIN, service)
         hass.data[DOMAIN].pop("shared", None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN, None)
@@ -170,12 +150,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the entry when options change so icon and tag_id refresh."""
+    """Reload the entry when config/options change so entities refresh."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
-    """Create (or return) the shared coordinator, tag listener and bulk service."""
+    """Create (or return) the shared coordinator, tag listener and services."""
     bucket = hass.data.setdefault(DOMAIN, {})
     if "shared" in bucket:
         return bucket["shared"]
@@ -188,22 +168,25 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
         "entry_ids": set(),
     }
 
+    async def _handle_scan(entry: ConfigEntry) -> None:
+        action = entry.data.get(CONF_SCAN_ACTION, DEFAULT_SCAN_ACTION)
+        if action == ScanAction.MARK_WORN.value:
+            await coordinator.async_mark_worn(entry.entry_id)
+        elif action == ScanAction.MARK_WASHED.value:
+            await coordinator.async_mark_washed(entry.entry_id)
+        else:
+            await coordinator.async_cycle_state(entry.entry_id)
+
     @callback
     def _on_tag_scanned(event: Event) -> None:
         tag_id = event.data.get("tag_id")
         if not tag_id:
             return
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            if _is_hub(entry):
-                continue
+        for entry in _item_entries(hass):
             if entry.data.get(CONF_NFC_TAG_ID) == tag_id:
-                hass.async_create_task(
-                    coordinator.async_cycle_state(entry.entry_id)
-                )
+                hass.async_create_task(_handle_scan(entry))
                 return
-        _LOGGER.debug(
-            "Ignoring tag scan with no matching wardrobe item: %s", tag_id
-        )
+        _LOGGER.debug("Ignoring tag scan with no matching wardrobe item: %s", tag_id)
 
     shared["unsub_tag_listener"] = hass.bus.async_listen(
         EVENT_TAG_SCANNED, _on_tag_scanned
@@ -216,9 +199,7 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
         cur_filter = call.data.get(ATTR_FILTER_CURRENT_STATE)
 
         matched = 0
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            if _is_hub(entry):
-                continue
+        for entry in _item_entries(hass):
             if cat_filter and entry.data.get(CONF_CATEGORY) != cat_filter:
                 continue
             if lt_filter and entry.data.get(CONF_LAUNDRY_TYPE) != lt_filter:
@@ -237,13 +218,40 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
             cur_filter,
         )
 
+    async def _async_wash_load(call: ServiceCall) -> None:
+        """Complete a wash: every dirty item (optionally one laundry type) → clean."""
+        lt_filter = call.data.get(ATTR_FILTER_LAUNDRY_TYPE)
+
+        washed: list[str] = []
+        for entry in _item_entries(hass):
+            if lt_filter and entry.data.get(CONF_LAUNDRY_TYPE) != lt_filter:
+                continue
+            if coordinator.get_state(entry.entry_id) not in DIRTY_STATES:
+                continue
+            await coordinator.async_mark_washed(entry.entry_id)
+            washed.append(entry.data.get(CONF_ITEM_NAME, entry.entry_id))
+
+        hass.bus.async_fire(
+            EVENT_WASH_COMPLETED,
+            {
+                ATTR_FILTER_LAUNDRY_TYPE: lt_filter,
+                "count": len(washed),
+                ATTR_ITEMS: sorted(washed),
+            },
+        )
+        _LOGGER.info(
+            "wardrobe.wash_load: washed %d items (laundry_type=%s)",
+            len(washed),
+            lt_filter,
+        )
+
     hass.services.async_register(
-        DOMAIN,
-        SERVICE_BULK_SET_STATE,
-        _async_bulk_set_state,
-        schema=_BULK_SET_STATE_SCHEMA,
+        DOMAIN, SERVICE_BULK_SET_STATE, _async_bulk_set_state, _BULK_SET_STATE_SCHEMA
     )
-    shared["bulk_service_registered"] = True
+    hass.services.async_register(
+        DOMAIN, SERVICE_WASH_LOAD, _async_wash_load, _WASH_LOAD_SCHEMA
+    )
+    shared["wash_load"] = _async_wash_load
 
     bucket["shared"] = shared
     return shared

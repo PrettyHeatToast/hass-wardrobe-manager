@@ -1,189 +1,121 @@
-"""Sensor platform tests: per-item sensors + household summary sensors."""
+"""Sensor tests: per-item counters/timestamps/cost and hub aggregates."""
 
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from custom_components.wardrobe.const import CONF_PURCHASE_PRICE, DOMAIN
 
-from custom_components.wardrobe.const import (
-    ATTR_BY_CATEGORY,
-    ATTR_BY_LAUNDRY_TYPE,
-    ATTR_ITEMS,
-    CONF_CATEGORY,
-    CONF_ITEM_NAME,
-    CONF_KIND,
-    CONF_LAUNDRY_TYPE,
-    CONF_NFC_TAG_ID,
-    CONF_WEAR_THRESHOLD,
-    DEFAULT_LAUNDRY_TYPE,
-    DOMAIN,
-    KIND_SUMMARY,
-)
+from .helpers import coordinator_of, entity_id, hub_entity_id, setup_item
 
 
-async def _setup_item(
-    hass: HomeAssistant,
-    *,
-    name: str,
-    category: str = "shirt",
-    laundry_type: str = DEFAULT_LAUNDRY_TYPE,
-    wear_threshold: int = 0,
-) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=name,
-        unique_id=name.lower().replace(" ", "_"),
-        data={
-            CONF_ITEM_NAME: name,
-            CONF_CATEGORY: category,
-            CONF_NFC_TAG_ID: None,
-            CONF_LAUNDRY_TYPE: laundry_type,
-            CONF_WEAR_THRESHOLD: wear_threshold,
-        },
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    return entry
+async def test_item_counter_sensors(hass: HomeAssistant) -> None:
+    entry = await setup_item(hass)
+    coordinator = coordinator_of(hass)
 
-
-def _get_coordinator(hass: HomeAssistant):
-    return hass.data[DOMAIN]["shared"]["coordinator"]
-
-
-async def test_per_item_sensors_registered(hass: HomeAssistant) -> None:
-    """Every item gets four sensors (counter ×2, timestamp ×2)."""
-    entry = await _setup_item(hass, name="Blue Shirt")
-
-    registry = er.async_get(hass)
-    for suffix in (
-        "wears_since_wash",
-        "wear_count_total",
-        "last_worn_at",
-        "state_changed_at",
-    ):
-        unique_id = f"{DOMAIN}_{entry.entry_id}_{suffix}"
-        entry_in_reg = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
-        assert entry_in_reg is not None, f"missing sensor for {suffix}"
-
-
-async def test_wears_since_wash_sensor_value_updates(hass: HomeAssistant) -> None:
-    """The wears_since_wash sensor reflects coordinator state after a transition."""
-    entry = await _setup_item(hass, name="Blue Shirt")
-    coordinator = _get_coordinator(hass)
-
-    await coordinator.async_set_state(entry.entry_id, "worn")
+    await coordinator.async_mark_worn(entry.entry_id)
+    await coordinator.async_mark_worn(entry.entry_id)
+    await coordinator.async_mark_washed(entry.entry_id)
     await hass.async_block_till_done()
 
-    registry = er.async_get(hass)
-    eid = registry.async_get_entity_id(
-        "sensor", DOMAIN, f"{DOMAIN}_{entry.entry_id}_wears_since_wash"
-    )
-    state = hass.states.get(eid)
-    assert state is not None
-    assert state.state == "1"
+    assert hass.states.get(entity_id(hass, "sensor", entry, "wears_since_wash")).state == "0"
+    assert hass.states.get(entity_id(hass, "sensor", entry, "wear_count_total")).state == "2"
+    assert hass.states.get(entity_id(hass, "sensor", entry, "wash_count")).state == "1"
 
 
-async def test_last_worn_at_sensor_populated_after_wear(
-    hass: HomeAssistant,
-) -> None:
-    """last_worn_at sensor becomes a real timestamp after entering 'worn'."""
-    entry = await _setup_item(hass, name="Blue Shirt")
-    coordinator = _get_coordinator(hass)
+async def test_item_timestamp_sensors(hass: HomeAssistant) -> None:
+    entry = await setup_item(hass)
+    coordinator = coordinator_of(hass)
 
-    await coordinator.async_set_state(entry.entry_id, "worn")
+    last_worn = entity_id(hass, "sensor", entry, "last_worn_at")
+    last_washed = entity_id(hass, "sensor", entry, "last_washed_at")
+    assert hass.states.get(last_worn).state == "unknown"
+    assert hass.states.get(last_washed).state == "unknown"
+
+    await coordinator.async_mark_worn(entry.entry_id)
+    await coordinator.async_mark_washed(entry.entry_id)
     await hass.async_block_till_done()
 
-    registry = er.async_get(hass)
-    eid = registry.async_get_entity_id(
-        "sensor", DOMAIN, f"{DOMAIN}_{entry.entry_id}_last_worn_at"
+    assert hass.states.get(last_worn).state != "unknown"
+    assert hass.states.get(last_washed).state != "unknown"
+
+
+async def test_cost_per_wear_only_with_price(hass: HomeAssistant) -> None:
+    priced = await setup_item(
+        hass, name="Fancy Coat", **{CONF_PURCHASE_PRICE: 100.0}
     )
-    state = hass.states.get(eid)
-    assert state is not None
-    # Timestamp device class renders as ISO 8601 string, not "unknown".
-    assert state.state not in ("unknown", "unavailable", "")
-
-
-async def test_summary_sensors_added_once_across_entries(
-    hass: HomeAssistant,
-) -> None:
-    """Three summary sensors total, regardless of how many items are added."""
-    await _setup_item(hass, name="Item A")
-    await _setup_item(hass, name="Item B")
-    await _setup_item(hass, name="Item C")
+    plain = await setup_item(hass, name="Plain Tee")
+    coordinator = coordinator_of(hass)
 
     registry = er.async_get(hass)
-    summary_ids = [
-        registry.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_summary_{state}")
-        for state in ("clean", "worn", "laundry")
-    ]
-    assert all(s is not None for s in summary_ids)
-
-
-async def test_summary_sensor_counts_and_breakdowns(hass: HomeAssistant) -> None:
-    """Summary 'worn' sensor reflects count and breakdown attributes."""
-    a = await _setup_item(hass, name="Shirt A", category="shirt", laundry_type="dark")
-    b = await _setup_item(hass, name="Shirt B", category="shirt", laundry_type="dark")
-    c = await _setup_item(hass, name="Pants C", category="pants", laundry_type="light")
-
-    coordinator = _get_coordinator(hass)
-    for entry in (a, b, c):
-        await coordinator.async_set_state(entry.entry_id, "worn")
-    await hass.async_block_till_done()
-
-    registry = er.async_get(hass)
-    eid = registry.async_get_entity_id(
-        "sensor", DOMAIN, f"{DOMAIN}_summary_worn"
-    )
-    state = hass.states.get(eid)
-    assert state is not None
-    assert state.state == "3"
-    assert state.attributes[ATTR_BY_CATEGORY] == {"shirt": 2, "pants": 1}
-    assert state.attributes[ATTR_BY_LAUNDRY_TYPE] == {"dark": 2, "light": 1}
-    assert state.attributes[ATTR_ITEMS] == ["Pants C", "Shirt A", "Shirt B"]
-
-
-async def test_summary_sensors_belong_to_hub_entry(hass: HomeAssistant) -> None:
-    """Summary entities are registered against the auto-created hub entry."""
-    await _setup_item(hass, name="Item Z")
-
-    hub_entries = [
-        e
-        for e in hass.config_entries.async_entries(DOMAIN)
-        if e.data.get(CONF_KIND) == KIND_SUMMARY
-    ]
-    assert len(hub_entries) == 1
-    hub = hub_entries[0]
-
-    registry = er.async_get(hass)
-    for state in ("clean", "worn", "laundry"):
-        eid = registry.async_get_entity_id(
-            "sensor", DOMAIN, f"{DOMAIN}_summary_{state}"
+    assert (
+        registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{DOMAIN}_{plain.entry_id}_cost_per_wear"
         )
-        assert eid is not None
-        rec = registry.async_get(eid)
-        assert rec is not None
-        assert rec.config_entry_id == hub.entry_id
-
-
-async def test_summary_sensors_track_state_changes(hass: HomeAssistant) -> None:
-    """When an item changes state, the relevant summary counts move."""
-    entry = await _setup_item(hass, name="Sock")
-    coordinator = _get_coordinator(hass)
-
-    registry = er.async_get(hass)
-    clean_id = registry.async_get_entity_id("sensor", DOMAIN, f"{DOMAIN}_summary_clean")
-    laundry_id = registry.async_get_entity_id(
-        "sensor", DOMAIN, f"{DOMAIN}_summary_laundry"
+        is None
     )
 
-    assert hass.states.get(clean_id).state == "1"
-    assert hass.states.get(laundry_id).state == "0"
+    cpw = entity_id(hass, "sensor", priced, "cost_per_wear")
+    # Never worn: the full price.
+    assert float(hass.states.get(cpw).state) == 100.0
 
+    await coordinator.async_mark_worn(priced.entry_id)
+    await coordinator.async_mark_washed(priced.entry_id)
+    await coordinator.async_mark_worn(priced.entry_id)
+    await hass.async_block_till_done()
+    assert float(hass.states.get(cpw).state) == 50.0
+
+
+async def test_hub_state_counts(hass: HomeAssistant) -> None:
+    a = await setup_item(hass, name="Item A")
+    b = await setup_item(hass, name="Item B")
+    c = await setup_item(hass, name="Item C", extra_states=["washing"])
+    coordinator = coordinator_of(hass)
+
+    await coordinator.async_set_state(a.entry_id, "worn")
+    await coordinator.async_set_state(b.entry_id, "laundry")
+    await coordinator.async_set_state(c.entry_id, "washing")
+    await hass.async_block_till_done()
+
+    assert hass.states.get(hub_entity_id(hass, "sensor", "clean")).state == "0"
+    assert hass.states.get(hub_entity_id(hass, "sensor", "worn")).state == "1"
+    assert hass.states.get(hub_entity_id(hass, "sensor", "laundry")).state == "1"
+    assert hass.states.get(hub_entity_id(hass, "sensor", "in_wash")).state == "1"
+    assert hass.states.get(hub_entity_id(hass, "sensor", "total")).state == "3"
+
+
+async def test_hub_laundry_load_sensor_and_attributes(hass: HomeAssistant) -> None:
+    dark1 = await setup_item(hass, name="Black Jeans", laundry_type="dark")
+    dark2 = await setup_item(hass, name="Navy Hoodie", laundry_type="dark")
+    light = await setup_item(hass, name="White Tee", laundry_type="light")
+    coordinator = coordinator_of(hass)
+
+    for e in (dark1, dark2, light):
+        await coordinator.async_set_state(e.entry_id, "laundry")
+    await hass.async_block_till_done()
+
+    dark_load = hass.states.get(hub_entity_id(hass, "sensor", "load_dark"))
+    assert dark_load.state == "2"
+    assert dark_load.attributes["items"] == ["Black Jeans", "Navy Hoodie"]
+
+    light_load = hass.states.get(hub_entity_id(hass, "sensor", "load_light"))
+    assert light_load.state == "1"
+
+
+async def test_hub_needs_wash_count(hass: HomeAssistant) -> None:
+    entry = await setup_item(hass, wear_threshold=1)
+    await setup_item(hass, name="No Threshold")
+    coordinator = coordinator_of(hass)
+
+    needs = hub_entity_id(hass, "sensor", "needs_washing")
+    assert hass.states.get(needs).state == "0"
+
+    await coordinator.async_mark_worn(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(needs).state == "1"
+
+    # Once it's queued in the basket, it no longer "needs washing".
     await coordinator.async_set_state(entry.entry_id, "laundry")
     await hass.async_block_till_done()
-
-    assert hass.states.get(clean_id).state == "0"
-    assert hass.states.get(laundry_id).state == "1"
+    assert hass.states.get(needs).state == "0"

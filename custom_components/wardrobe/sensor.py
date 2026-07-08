@@ -12,9 +12,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -25,14 +23,20 @@ from .const import (
     CONF_ITEM_NAME,
     CONF_KIND,
     CONF_LAUNDRY_TYPE,
+    CONF_PURCHASE_PRICE,
+    CORE_CYCLE,
     DEFAULT_LAUNDRY_TYPE,
+    DIRTY_STATES,
     DOMAIN,
     KIND_SUMMARY,
-    STATES,
-    SUMMARY_DEVICE_ID,
-    SUMMARY_DEVICE_NAME,
+    LAUNDRY_TYPES,
+    WardrobeState,
 )
 from .coordinator import WardrobeCoordinator
+from .entity import WardrobeHubEntity, WardrobeItemEntity
+
+# Hub count sensors: the three core states plus the wash pipeline as one bucket.
+_PIPELINE_KEY = "in_wash"
 
 
 async def async_setup_entry(
@@ -40,163 +44,229 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Add the entities for either a single item or the summary hub."""
+    """Add the sensors for either a single item or the summary hub."""
     coordinator: WardrobeCoordinator = hass.data[DOMAIN]["shared"]["coordinator"]
 
     if entry.data.get(CONF_KIND) == KIND_SUMMARY:
-        async_add_entities(
-            WardrobeSummaryCountSensor(coordinator, state) for state in STATES
+        entities: list[SensorEntity] = [
+            WardrobeSummaryCountSensor(coordinator, state) for state in CORE_CYCLE
+        ]
+        entities.append(WardrobePipelineCountSensor(coordinator))
+        entities.append(WardrobeTotalItemsSensor(coordinator))
+        entities.append(WardrobeNeedsWashCountSensor(coordinator))
+        entities.extend(
+            WardrobeLaundryLoadSensor(coordinator, lt) for lt in LAUNDRY_TYPES
         )
+        async_add_entities(entities)
         return
 
-    async_add_entities(
-        [
-            WearsSinceWashSensor(coordinator, entry),
-            WearCountTotalSensor(coordinator, entry),
-            LastWornAtSensor(coordinator, entry),
-            StateChangedAtSensor(coordinator, entry),
-        ]
-    )
+    item_entities: list[SensorEntity] = [
+        WardrobeCounterSensor(coordinator, entry, "wears_since_wash"),
+        WardrobeCounterSensor(
+            coordinator, entry, "wear_count_total", SensorStateClass.TOTAL_INCREASING
+        ),
+        WardrobeCounterSensor(
+            coordinator, entry, "wash_count", SensorStateClass.TOTAL_INCREASING
+        ),
+        WardrobeTimestampSensor(coordinator, entry, "last_worn_at"),
+        WardrobeTimestampSensor(coordinator, entry, "last_washed_at"),
+        WardrobeTimestampSensor(coordinator, entry, "state_changed_at"),
+    ]
+    if entry.data.get(CONF_PURCHASE_PRICE) is not None:
+        item_entities.append(WardrobeCostPerWearSensor(coordinator, entry))
+    async_add_entities(item_entities)
 
 
-class _WardrobeItemSensorBase(CoordinatorEntity[WardrobeCoordinator], SensorEntity):
-    """Shared device-info / unique-id boilerplate for per-item sensors."""
+# ---------------------------------------------------------------------------
+# Per-item sensors
+# ---------------------------------------------------------------------------
 
-    _attr_has_entity_name = True
+
+class WardrobeCounterSensor(WardrobeItemEntity, SensorEntity):
+    """Integer counter read straight from the item's record."""
+
+    _attr_icon = "mdi:counter"
 
     def __init__(
         self,
         coordinator: WardrobeCoordinator,
         entry: ConfigEntry,
-        translation_key: str,
+        key: str,
+        state_class: SensorStateClass = SensorStateClass.MEASUREMENT,
     ) -> None:
-        super().__init__(coordinator)
-        self._entry = entry
-        self._attr_translation_key = translation_key
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{translation_key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.data[CONF_ITEM_NAME],
-        )
-
-    def _record(self):
-        return self.coordinator.get_record(self._entry.entry_id)
-
-
-class WearsSinceWashSensor(_WardrobeItemSensorBase):
-    """Number of wears since the item last entered the laundry state."""
-
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:counter"
-
-    def __init__(
-        self, coordinator: WardrobeCoordinator, entry: ConfigEntry
-    ) -> None:
-        super().__init__(coordinator, entry, "wears_since_wash")
+        """Initialize a counter sensor for one record field."""
+        super().__init__(coordinator, entry, key)
+        self._key = key
+        self._attr_state_class = state_class
 
     @property
     def native_value(self) -> int:
-        return int(self._record()["wears_since_wash"])
+        """Return the counter value."""
+        return int(self._record()[self._key])  # type: ignore[literal-required]
 
 
-class WearCountTotalSensor(_WardrobeItemSensorBase):
-    """Lifetime number of wears recorded for this item."""
-
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_icon = "mdi:counter"
-
-    def __init__(
-        self, coordinator: WardrobeCoordinator, entry: ConfigEntry
-    ) -> None:
-        super().__init__(coordinator, entry, "wear_count_total")
-
-    @property
-    def native_value(self) -> int:
-        return int(self._record()["wear_count_total"])
-
-
-class LastWornAtSensor(_WardrobeItemSensorBase):
-    """Timestamp of the last transition into the worn state."""
+class WardrobeTimestampSensor(WardrobeItemEntity, SensorEntity):
+    """Timestamp read straight from the item's record."""
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     def __init__(
-        self, coordinator: WardrobeCoordinator, entry: ConfigEntry
+        self, coordinator: WardrobeCoordinator, entry: ConfigEntry, key: str
     ) -> None:
-        super().__init__(coordinator, entry, "last_worn_at")
+        """Initialize a timestamp sensor for one record field."""
+        super().__init__(coordinator, entry, key)
+        self._key = key
 
     @property
     def native_value(self) -> datetime | None:
-        raw = self._record()["last_worn_at"]
+        """Return the parsed timestamp, or None if never set."""
+        raw = self._record()[self._key]  # type: ignore[literal-required]
         if not raw:
             return None
         return dt_util.parse_datetime(raw)
 
 
-class StateChangedAtSensor(_WardrobeItemSensorBase):
-    """Timestamp of the most recent state transition."""
+class WardrobeCostPerWearSensor(WardrobeItemEntity, SensorEntity):
+    """Purchase price divided by lifetime wears (only when a price is set)."""
 
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:cash"
+    _attr_suggested_display_precision = 2
 
-    def __init__(
-        self, coordinator: WardrobeCoordinator, entry: ConfigEntry
-    ) -> None:
-        super().__init__(coordinator, entry, "state_changed_at")
+    def __init__(self, coordinator: WardrobeCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the cost-per-wear sensor."""
+        super().__init__(coordinator, entry, "cost_per_wear")
 
     @property
-    def native_value(self) -> datetime | None:
-        raw = self._record()["state_changed_at"]
-        if not raw:
-            return None
-        return dt_util.parse_datetime(raw)
+    def native_unit_of_measurement(self) -> str | None:
+        """Use the household currency."""
+        return self.hass.config.currency
+
+    @property
+    def native_value(self) -> float:
+        """Return price / wears (the full price while never worn)."""
+        price = float(self._entry.data[CONF_PURCHASE_PRICE])
+        wears = int(self._record()["wear_count_total"])
+        return round(price / wears, 2) if wears > 0 else price
 
 
-class WardrobeSummaryCountSensor(
-    CoordinatorEntity[WardrobeCoordinator], SensorEntity
-):
-    """Household-wide count of items in a given state."""
+# ---------------------------------------------------------------------------
+# Summary hub sensors
+# ---------------------------------------------------------------------------
 
-    _attr_has_entity_name = True
+
+class _HubSensorBase(WardrobeHubEntity, SensorEntity):
+    """Shared helpers for hub sensors that enumerate items."""
+
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:wardrobe-outline"
 
-    def __init__(self, coordinator: WardrobeCoordinator, state: str) -> None:
-        super().__init__(coordinator)
-        self._state = state
-        self._attr_translation_key = f"summary_{state}"
-        self._attr_unique_id = f"{DOMAIN}_summary_{state}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, SUMMARY_DEVICE_ID)},
-            name=SUMMARY_DEVICE_NAME,
-            manufacturer="Wardrobe",
-            model="Summary",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+    def _matching_entries(self) -> list[tuple[ConfigEntry, dict[str, Any]]]:
+        """Yield (entry, record) pairs this sensor counts."""
+        out: list[tuple[ConfigEntry, dict[str, Any]]] = []
+        for entry_id, rec in self.coordinator.data.items():
+            entry = self.hass.config_entries.async_get_entry(entry_id)
+            if entry is None or entry.data.get(CONF_KIND) == KIND_SUMMARY:
+                continue
+            if self._matches(entry, rec):
+                out.append((entry, rec))
+        return out
+
+    def _matches(self, entry: ConfigEntry, rec: dict[str, Any]) -> bool:
+        """Return True when the item belongs in this sensor's count."""
+        raise NotImplementedError
 
     @property
     def native_value(self) -> int:
-        return self.coordinator.count_by_state().get(self._state, 0)
+        """Return the number of matching items."""
+        return len(self._matching_entries())
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Break the count down by name, category and laundry type."""
         items: list[str] = []
         by_category: dict[str, int] = {}
         by_laundry_type: dict[str, int] = {}
-        for entry_id, rec in self.coordinator.data.items():
-            if rec["state"] != self._state:
-                continue
-            entry = self.hass.config_entries.async_get_entry(entry_id)
-            if entry is None:
-                continue
-            items.append(entry.data.get(CONF_ITEM_NAME, entry_id))
+        for entry, _rec in self._matching_entries():
+            items.append(entry.data.get(CONF_ITEM_NAME, entry.entry_id))
             category = entry.data.get(CONF_CATEGORY, "other")
             laundry_type = entry.data.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE)
             by_category[category] = by_category.get(category, 0) + 1
-            by_laundry_type[laundry_type] = (
-                by_laundry_type.get(laundry_type, 0) + 1
-            )
+            by_laundry_type[laundry_type] = by_laundry_type.get(laundry_type, 0) + 1
         return {
             ATTR_ITEMS: sorted(items),
             ATTR_BY_CATEGORY: by_category,
             ATTR_BY_LAUNDRY_TYPE: by_laundry_type,
         }
+
+
+class WardrobeSummaryCountSensor(_HubSensorBase):
+    """Household-wide count of items in a given state."""
+
+    def __init__(self, coordinator: WardrobeCoordinator, state: str) -> None:
+        """Initialize the count sensor for one state."""
+        # unique_suffix keeps the pre-2.0 unique id wardrobe_summary_<state>.
+        super().__init__(coordinator, f"summary_{state}", state)
+        self._state = state
+
+    def _matches(self, entry: ConfigEntry, rec: dict[str, Any]) -> bool:
+        return rec["state"] == self._state
+
+
+class WardrobePipelineCountSensor(_HubSensorBase):
+    """Count of items currently in the wash pipeline (washing/drying/ironing)."""
+
+    _attr_icon = "mdi:washing-machine"
+
+    def __init__(self, coordinator: WardrobeCoordinator) -> None:
+        """Initialize the pipeline count sensor."""
+        super().__init__(coordinator, f"summary_{_PIPELINE_KEY}", _PIPELINE_KEY)
+
+    def _matches(self, entry: ConfigEntry, rec: dict[str, Any]) -> bool:
+        return rec["state"] in DIRTY_STATES and rec["state"] != (
+            WardrobeState.LAUNDRY.value
+        )
+
+
+class WardrobeTotalItemsSensor(_HubSensorBase):
+    """Total number of tracked clothing items."""
+
+    def __init__(self, coordinator: WardrobeCoordinator) -> None:
+        """Initialize the total-items sensor."""
+        super().__init__(coordinator, "summary_total", "total")
+
+    def _matches(self, entry: ConfigEntry, rec: dict[str, Any]) -> bool:
+        return True
+
+
+class WardrobeNeedsWashCountSensor(_HubSensorBase):
+    """Count of items that reached their wear threshold but aren't queued yet."""
+
+    _attr_icon = "mdi:alert-circle-outline"
+
+    def __init__(self, coordinator: WardrobeCoordinator) -> None:
+        """Initialize the needs-wash count sensor."""
+        super().__init__(coordinator, "summary_needs_washing", "needs_washing")
+
+    def _matches(self, entry: ConfigEntry, rec: dict[str, Any]) -> bool:
+        threshold = self.coordinator.get_threshold(entry.entry_id)
+        if threshold <= 0 or rec["state"] in DIRTY_STATES:
+            return False
+        return int(rec["wears_since_wash"]) >= threshold
+
+
+class WardrobeLaundryLoadSensor(_HubSensorBase):
+    """Number of items of one laundry type waiting in the laundry basket."""
+
+    _attr_icon = "mdi:basket"
+
+    def __init__(self, coordinator: WardrobeCoordinator, laundry_type: str) -> None:
+        """Initialize the load sensor for one laundry type."""
+        super().__init__(coordinator, f"load_{laundry_type}")
+        self._laundry_type = laundry_type
+
+    def _matches(self, entry: ConfigEntry, rec: dict[str, Any]) -> bool:
+        return (
+            rec["state"] == WardrobeState.LAUNDRY.value
+            and entry.data.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE)
+            == self._laundry_type
+        )

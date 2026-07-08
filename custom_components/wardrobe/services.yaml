@@ -1,8 +1,8 @@
 cycle_state:
   name: Cycle state
   description: >-
-    Advance a wardrobe item to the next state in the cycle
-    (clean → worn → laundry → clean).
+    Advance a clothing item to its next state in the cycle
+    (clean → worn → laundry → … → clean). Respects the item's wear threshold.
   target:
     entity:
       integration: wardrobe
@@ -10,7 +10,7 @@ cycle_state:
 
 set_state:
   name: Set state
-  description: Set a wardrobe item to a specific state.
+  description: Jump a clothing item to a specific state.
   target:
     entity:
       integration: wardrobe
@@ -18,16 +18,49 @@ set_state:
   fields:
     state:
       name: State
-      description: Target state for the wardrobe item.
+      description: The state to set.
       required: true
-      example: clean
+      example: laundry
       selector:
         select:
           options:
             - clean
             - worn
             - laundry
+            - washing
+            - drying
+            - ironing
+            - repair
+            - storage
           translation_key: state
+
+mark_worn:
+  name: Mark worn
+  description: >-
+    Record a wear. Transitions the item to worn, or counts a re-wear when it
+    is already worn.
+  target:
+    entity:
+      integration: wardrobe
+      domain: select
+
+mark_washed:
+  name: Mark washed
+  description: >-
+    Mark the item freshly washed. Sets it to clean, increments the wash count
+    and resets the wears-since-wash counter.
+  target:
+    entity:
+      integration: wardrobe
+      domain: select
+
+reset_statistics:
+  name: Reset statistics
+  description: Zero all wear/wash counters and timestamps for the item.
+  target:
+    entity:
+      integration: wardrobe
+      domain: select
 
 bulk_set_state:
   name: Bulk set state
@@ -46,29 +79,53 @@ bulk_set_state:
             - clean
             - worn
             - laundry
+            - washing
+            - drying
+            - ironing
+            - repair
+            - storage
           translation_key: state
     category:
       name: Category filter
       description: Only affect items in this category.
       required: false
+      example: t_shirt
       selector:
         select:
           options:
-            - shirt
             - t_shirt
+            - shirt
+            - polo
+            - blouse
+            - sweater
+            - hoodie
+            - cardigan
+            - jacket
+            - coat
+            - blazer
+            - suit
+            - dress
+            - skirt
             - pants
             - jeans
             - shorts
-            - skirt
-            - dress
-            - jacket
-            - coat
-            - sweater
-            - hoodie
-            - shoes
+            - leggings
+            - underwear
             - socks
+            - pajamas
+            - sportswear
+            - swimwear
+            - shoes
+            - sneakers
+            - boots
+            - sandals
             - hat
+            - cap
             - scarf
+            - gloves
+            - belt
+            - tie
+            - accessory
             - other
           translation_key: category
     laundry_type:
@@ -82,6 +139,8 @@ bulk_set_state:
             - light
             - color
             - delicates
+            - wool
+            - hand_wash
           translation_key: laundry_type
     current_state:
       name: Current-state filter
@@ -93,4 +152,31 @@ bulk_set_state:
             - clean
             - worn
             - laundry
+            - washing
+            - drying
+            - ironing
+            - repair
+            - storage
           translation_key: state
+
+wash_load:
+  name: Wash load
+  description: >-
+    Complete a wash cycle. Every dirty item (in laundry, washing, drying or
+    ironing) — optionally limited to one laundry type — returns to clean with
+    its wash count incremented. Fires the wardrobe_wash_completed event.
+  fields:
+    laundry_type:
+      name: Laundry-type filter
+      description: Only wash items of this laundry type.
+      required: false
+      selector:
+        select:
+          options:
+            - dark
+            - light
+            - color
+            - delicates
+            - wool
+            - hand_wash
+          translation_key: laundry_type
