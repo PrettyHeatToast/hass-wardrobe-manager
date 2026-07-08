@@ -7,7 +7,8 @@
         "data": {
           "name": "Name",
           "category": "Category",
-          "laundry_type": "Laundry type"
+          "laundry_type": "Laundry type",
+          "tracking_mode": "Tracking mode"
         }
       },
       "tracking": {
@@ -17,7 +18,16 @@
           "nfc_tag_id": "NFC tag ID",
           "scan_action": "When the tag is scanned",
           "extra_states": "Extra states",
-          "wear_threshold": "Wears per wash cycle (0 = off)"
+          "wear_threshold": "Wears per wash cycle (0 = off)",
+          "weight": "Load weight per item"
+        }
+      },
+      "bulk": {
+        "title": "Bulk item",
+        "description": "How many of these do you own, and how much does one count toward a laundry load?",
+        "data": {
+          "quantity": "Quantity owned",
+          "weight": "Load weight per unit"
         }
       },
       "details": {
@@ -54,14 +64,21 @@
           "details": "Details (brand, size, purchase info, …)"
         },
         "data": {
-          "load_size": "Items per laundry load"
+          "load_size": "Default load size (total weight)",
+          "load_size_dark": "Dark load size",
+          "load_size_light": "Light load size",
+          "load_size_color": "Color load size",
+          "load_size_delicates": "Delicates load size",
+          "load_size_wool": "Wool load size",
+          "load_size_hand_wash": "Hand-wash load size"
         }
       },
       "basics": {
         "title": "Basics",
         "data": {
           "category": "Category",
-          "laundry_type": "Laundry type"
+          "laundry_type": "Laundry type",
+          "quantity": "Quantity owned"
         }
       },
       "tracking": {
@@ -160,6 +177,12 @@
         "mark_washed": "Mark as washed"
       }
     },
+    "tracking_mode": {
+      "options": {
+        "individual": "Individual item (state machine, NFC tag)",
+        "bulk": "Bulk item (owned in quantity, counter-tracked)"
+      }
+    },
     "extra_states": {
       "options": {
         "washing": "Washing (in the machine)",
@@ -228,10 +251,19 @@
     "button": {
       "mark_worn": { "name": "I wore this" },
       "mark_washed": { "name": "Washed" },
-      "complete_wash": { "name": "Complete wash cycle" }
+      "wear_one": { "name": "Wear one" },
+      "complete_wash": { "name": "Complete wash cycle" },
+      "complete_wash_dark": { "name": "Complete dark wash" },
+      "complete_wash_light": { "name": "Complete light wash" },
+      "complete_wash_color": { "name": "Complete color wash" },
+      "complete_wash_delicates": { "name": "Complete delicates wash" },
+      "complete_wash_wool": { "name": "Complete wool wash" },
+      "complete_wash_hand_wash": { "name": "Complete hand wash" }
     },
     "number": {
-      "wear_threshold": { "name": "Wears per wash cycle" }
+      "wear_threshold": { "name": "Wears per wash cycle" },
+      "weight": { "name": "Load weight" },
+      "clean_remaining": { "name": "Clean remaining" }
     }
   }
 }

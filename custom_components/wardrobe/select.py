@@ -40,6 +40,7 @@ from .const import (
     SERVICE_RESET_STATISTICS,
     SERVICE_SET_STATE,
     STATE_ICONS,
+    is_bulk_entry,
     selectable_states,
 )
 from .coordinator import WardrobeCoordinator
@@ -53,7 +54,10 @@ async def async_setup_entry(
 ) -> None:
     """Add the select entity for this clothing item and (re-)register services."""
     coordinator: WardrobeCoordinator = hass.data[DOMAIN]["shared"]["coordinator"]
-    async_add_entities([WardrobeStateSelect(coordinator, entry)])
+    if not is_bulk_entry(entry.data):
+        # Bulk items have no state machine, hence no state select; the
+        # entity services below must still be (re-)registered.
+        async_add_entities([WardrobeStateSelect(coordinator, entry)])
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(

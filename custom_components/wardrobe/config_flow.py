@@ -42,15 +42,21 @@ from .const import (
     CONF_NOTES,
     CONF_PURCHASE_DATE,
     CONF_PURCHASE_PRICE,
+    CONF_QUANTITY,
     CONF_SCAN_ACTION,
     CONF_SEASONS,
     CONF_SIZE,
+    CONF_TRACKING_MODE,
     CONF_WEAR_THRESHOLD,
+    CONF_WEIGHT,
     DEFAULT_CATEGORY,
     DEFAULT_LAUNDRY_TYPE,
     DEFAULT_LOAD_SIZE,
+    DEFAULT_QUANTITY,
     DEFAULT_SCAN_ACTION,
+    DEFAULT_TRACKING_MODE,
     DEFAULT_WEAR_THRESHOLD,
+    DEFAULT_WEIGHT,
     DOMAIN,
     EXTRA_STATES,
     KIND_SUMMARY,
@@ -59,6 +65,10 @@ from .const import (
     SEASONS,
     SUMMARY_DEVICE_NAME,
     SUMMARY_HUB_UNIQUE_ID,
+    TRACKING_MODES,
+    TrackingMode,
+    is_bulk_entry,
+    load_size_key,
 )
 
 # Optional free-text details collected in the "details" step. Empty strings
@@ -78,8 +88,14 @@ def _select(options: list[str], key: str, *, multiple: bool = False) -> SelectSe
     )
 
 
-def _basics_schema() -> dict[vol.Marker, Any]:
-    return {
+def _weight_selector() -> NumberSelector:
+    return NumberSelector(
+        NumberSelectorConfig(min=0.1, max=100, step=0.1, mode=NumberSelectorMode.BOX)
+    )
+
+
+def _basics_schema(*, include_mode: bool = False) -> dict[vol.Marker, Any]:
+    schema: dict[vol.Marker, Any] = {
         vol.Required(CONF_ITEM_NAME): TextSelector(),
         vol.Required(CONF_CATEGORY, default=DEFAULT_CATEGORY): _select(
             CATEGORIES, "category"
@@ -88,9 +104,18 @@ def _basics_schema() -> dict[vol.Marker, Any]:
             LAUNDRY_TYPES, "laundry_type"
         ),
     }
+    if include_mode:
+        schema[
+            vol.Required(CONF_TRACKING_MODE, default=DEFAULT_TRACKING_MODE)
+        ] = _select(TRACKING_MODES, "tracking_mode")
+    return schema
 
 
-def _tracking_schema(*, include_threshold: bool) -> dict[vol.Marker, Any]:
+def _tracking_schema(*, include_seeded: bool) -> dict[vol.Marker, Any]:
+    """Tracking fields; seeded fields (threshold, weight) only at creation.
+
+    After creation those are owned by the item's number entities.
+    """
     schema: dict[vol.Marker, Any] = {
         vol.Optional(CONF_NFC_TAG_ID, default=""): TextSelector(),
         vol.Required(CONF_SCAN_ACTION, default=DEFAULT_SCAN_ACTION): _select(
@@ -100,13 +125,23 @@ def _tracking_schema(*, include_threshold: bool) -> dict[vol.Marker, Any]:
             EXTRA_STATES, "extra_states", multiple=True
         ),
     }
-    if include_threshold:
+    if include_seeded:
         schema[
             vol.Optional(CONF_WEAR_THRESHOLD, default=DEFAULT_WEAR_THRESHOLD)
         ] = NumberSelector(
             NumberSelectorConfig(min=0, max=999, step=1, mode=NumberSelectorMode.BOX)
         )
+        schema[vol.Optional(CONF_WEIGHT, default=DEFAULT_WEIGHT)] = _weight_selector()
     return schema
+
+
+def _bulk_schema() -> dict[vol.Marker, Any]:
+    return {
+        vol.Required(CONF_QUANTITY, default=DEFAULT_QUANTITY): NumberSelector(
+            NumberSelectorConfig(min=1, max=999, step=1, mode=NumberSelectorMode.BOX)
+        ),
+        vol.Optional(CONF_WEIGHT, default=DEFAULT_WEIGHT): _weight_selector(),
+    }
 
 
 def _details_schema() -> dict[vol.Marker, Any]:
@@ -168,7 +203,7 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1 — basics: name, category and laundry type."""
+        """Step 1 — basics: name, category, laundry type and tracking mode."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -182,15 +217,48 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ITEM_NAME: name,
                     CONF_CATEGORY: user_input[CONF_CATEGORY],
                     CONF_LAUNDRY_TYPE: user_input[CONF_LAUNDRY_TYPE],
+                    CONF_TRACKING_MODE: user_input[CONF_TRACKING_MODE],
                 }
+                if self._data[CONF_TRACKING_MODE] == TrackingMode.BULK:
+                    return await self.async_step_bulk()
                 return await self.async_step_tracking()
 
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(_basics_schema()), user_input
+                vol.Schema(_basics_schema(include_mode=True)), user_input
             ),
             errors=errors,
+        )
+
+    async def async_step_bulk(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2 (bulk items) — owned quantity and per-unit weight.
+
+        Bulk items skip the NFC/tracking step; neutral defaults are stored
+        for the tracking keys so downstream lookups stay uniform.
+        """
+        if user_input is not None:
+            self._data.update(
+                {
+                    CONF_QUANTITY: int(user_input[CONF_QUANTITY]),
+                    CONF_WEIGHT: float(
+                        user_input.get(CONF_WEIGHT, DEFAULT_WEIGHT) or DEFAULT_WEIGHT
+                    ),
+                    CONF_NFC_TAG_ID: None,
+                    CONF_SCAN_ACTION: DEFAULT_SCAN_ACTION,
+                    CONF_EXTRA_STATES: [],
+                    CONF_WEAR_THRESHOLD: 0,
+                }
+            )
+            return await self.async_step_details()
+
+        return self.async_show_form(
+            step_id="bulk",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(_bulk_schema()), user_input
+            ),
         )
 
     async def async_step_tracking(
@@ -213,6 +281,10 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_WEAR_THRESHOLD: int(
                             user_input.get(CONF_WEAR_THRESHOLD, DEFAULT_WEAR_THRESHOLD)
                         ),
+                        CONF_WEIGHT: float(
+                            user_input.get(CONF_WEIGHT, DEFAULT_WEIGHT)
+                            or DEFAULT_WEIGHT
+                        ),
                     }
                 )
                 return await self.async_step_details()
@@ -220,7 +292,7 @@ class WardrobeConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="tracking",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(_tracking_schema(include_threshold=True)), user_input
+                vol.Schema(_tracking_schema(include_seeded=True)), user_input
             ),
             errors=errors,
         )
@@ -273,23 +345,26 @@ class WardrobeOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show the section menu."""
-        return self.async_show_menu(
-            step_id="init",
-            menu_options=["basics", "tracking", "details"],
-        )
+        """Show the section menu (bulk items have no tracking section)."""
+        menu = ["basics", "details"]
+        if not is_bulk_entry(self._entry.data):
+            menu.insert(1, "tracking")
+        return self.async_show_menu(step_id="init", menu_options=menu)
 
     async def async_step_basics(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit category and laundry type (the name identifies the entry)."""
+        """Edit category and laundry type (plus quantity for bulk items)."""
+        bulk = is_bulk_entry(self._entry.data)
+
         if user_input is not None:
-            return self._save(
-                {
-                    CONF_CATEGORY: user_input[CONF_CATEGORY],
-                    CONF_LAUNDRY_TYPE: user_input[CONF_LAUNDRY_TYPE],
-                }
-            )
+            updates = {
+                CONF_CATEGORY: user_input[CONF_CATEGORY],
+                CONF_LAUNDRY_TYPE: user_input[CONF_LAUNDRY_TYPE],
+            }
+            if bulk:
+                updates[CONF_QUANTITY] = int(user_input[CONF_QUANTITY])
+            return self._save(updates)
 
         schema = {
             vol.Required(
@@ -301,6 +376,17 @@ class WardrobeOptionsFlow(OptionsFlow):
                 default=self._entry.data.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE),
             ): _select(LAUNDRY_TYPES, "laundry_type"),
         }
+        if bulk:
+            schema[
+                vol.Required(
+                    CONF_QUANTITY,
+                    default=self._entry.data.get(CONF_QUANTITY, DEFAULT_QUANTITY),
+                )
+            ] = NumberSelector(
+                NumberSelectorConfig(
+                    min=1, max=999, step=1, mode=NumberSelectorMode.BOX
+                )
+            )
         return self.async_show_form(step_id="basics", data_schema=vol.Schema(schema))
 
     async def async_step_tracking(
@@ -341,7 +427,7 @@ class WardrobeOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="tracking",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(_tracking_schema(include_threshold=False)),
+                vol.Schema(_tracking_schema(include_seeded=False)),
                 user_input or current,
             ),
             errors=errors,
@@ -396,7 +482,7 @@ class WardrobeOptionsFlow(OptionsFlow):
 
 
 class WardrobeHubOptionsFlow(OptionsFlow):
-    """Options for the summary hub: laundry load size."""
+    """Options for the summary hub: laundry load thresholds (weight sums)."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Store the hub entry being edited."""
@@ -405,19 +491,38 @@ class WardrobeHubOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Edit the number of dirty items that makes a load 'ready'."""
-        if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={CONF_LOAD_SIZE: int(user_input[CONF_LOAD_SIZE])},
-            )
+        """Edit the total item weight that makes a load 'ready'.
 
-        schema = {
+        One global default plus optional per-laundry-type overrides; a
+        cleared override falls back to the default.
+        """
+        if user_input is not None:
+            data: dict[str, Any] = {
+                CONF_LOAD_SIZE: float(user_input[CONF_LOAD_SIZE])
+            }
+            for lt in LAUNDRY_TYPES:
+                value = user_input.get(load_size_key(lt))
+                if value is not None:
+                    data[load_size_key(lt)] = float(value)
+            return self.async_create_entry(title="", data=data)
+
+        threshold_selector = NumberSelector(
+            NumberSelectorConfig(min=0.5, max=100, step=0.5, mode=NumberSelectorMode.BOX)
+        )
+        schema: dict[vol.Marker, Any] = {
             vol.Required(
                 CONF_LOAD_SIZE,
                 default=self._entry.options.get(CONF_LOAD_SIZE, DEFAULT_LOAD_SIZE),
-            ): NumberSelector(
-                NumberSelectorConfig(min=1, max=100, step=1, mode=NumberSelectorMode.BOX)
-            )
+            ): threshold_selector
         }
-        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
+        current: dict[str, Any] = {}
+        for lt in LAUNDRY_TYPES:
+            schema[vol.Optional(load_size_key(lt))] = threshold_selector
+            if load_size_key(lt) in self._entry.options:
+                current[load_size_key(lt)] = self._entry.options[load_size_key(lt)]
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(schema), current
+            ),
+        )

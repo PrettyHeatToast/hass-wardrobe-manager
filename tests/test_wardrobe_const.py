@@ -8,6 +8,9 @@ from custom_components.wardrobe.const import (
     DIRTY_STATES,
     EXTRA_STATES,
     build_cycle,
+    is_bulk_entry,
+    load_size_key,
+    load_threshold_for,
     next_state_in,
     selectable_states,
 )
@@ -57,3 +60,24 @@ def test_state_taxonomy_is_consistent() -> None:
     assert "worn" not in DIRTY_STATES
     assert "laundry" in DIRTY_STATES
     assert "washing" in DIRTY_STATES
+
+
+def test_load_size_key() -> None:
+    assert load_size_key("wool") == "load_size_wool"
+
+
+def test_load_threshold_fallback_matrix() -> None:
+    # Nothing configured -> built-in default.
+    assert load_threshold_for({}, "dark") == 5.0
+    # Global default only.
+    assert load_threshold_for({"load_size": 3}, "dark") == 3.0
+    # Per-type override wins over the global default.
+    assert load_threshold_for({"load_size": 3, "load_size_wool": 1.5}, "wool") == 1.5
+    # An override for another type does not leak.
+    assert load_threshold_for({"load_size_wool": 1.5}, "dark") == 5.0
+
+
+def test_is_bulk_entry() -> None:
+    assert not is_bulk_entry({})
+    assert not is_bulk_entry({"tracking_mode": "individual"})
+    assert is_bulk_entry({"tracking_mode": "bulk"})

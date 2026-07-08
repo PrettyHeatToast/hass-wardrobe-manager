@@ -17,7 +17,7 @@ from custom_components.wardrobe.const import (
     SERVICE_WASH_LOAD,
 )
 
-from .helpers import coordinator_of, entity_id, setup_item
+from .helpers import coordinator_of, entity_id, setup_bulk_item, setup_item
 
 
 async def test_bulk_set_state_with_filters(hass: HomeAssistant) -> None:
@@ -134,3 +134,59 @@ async def test_select_entity_reflects_and_sets_state(hass: HomeAssistant) -> Non
     )
     assert coordinator.get_state(entry.entry_id) == "storage"
     assert hass.states.get(select_eid).state == "storage"
+
+
+async def test_wash_load_resets_bulk_items(hass: HomeAssistant) -> None:
+    jeans = await setup_item(hass, name="Jeans", laundry_type="dark")
+    dark_socks = await setup_bulk_item(
+        hass, name="Dark Socks", laundry_type="dark", quantity=4
+    )
+    light_socks = await setup_bulk_item(
+        hass, name="Light Socks", laundry_type="light", quantity=4
+    )
+    coordinator = coordinator_of(hass)
+
+    await coordinator.async_set_state(jeans.entry_id, "laundry")
+    await coordinator.async_bulk_wear_one(dark_socks.entry_id)
+    await coordinator.async_bulk_wear_one(light_socks.entry_id)
+
+    events = async_capture_events(hass, EVENT_WASH_COMPLETED)
+    await hass.services.async_call(
+        DOMAIN, SERVICE_WASH_LOAD, {"laundry_type": "dark"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert coordinator.get_state(jeans.entry_id) == "clean"
+    assert coordinator.get_record(dark_socks.entry_id)["dirty_count"] == 0
+    assert coordinator.get_record(dark_socks.entry_id)["wash_count"] == 1
+    # Other laundry types stay dirty.
+    assert coordinator.get_record(light_socks.entry_id)["dirty_count"] == 1
+
+    assert len(events) == 1
+    assert events[0].data["count"] == 2
+    assert events[0].data["items"] == ["Dark Socks", "Jeans"]
+
+
+async def test_wash_load_skips_clean_bulk_items(hass: HomeAssistant) -> None:
+    socks = await setup_bulk_item(hass, name="Socks", quantity=4)
+    coordinator = coordinator_of(hass)
+
+    events = async_capture_events(hass, EVENT_WASH_COMPLETED)
+    await hass.services.async_call(DOMAIN, SERVICE_WASH_LOAD, {}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert coordinator.get_record(socks.entry_id)["wash_count"] == 0
+    assert events[0].data["count"] == 0
+
+
+async def test_bulk_set_state_skips_bulk_items(hass: HomeAssistant) -> None:
+    socks = await setup_bulk_item(hass, name="Socks", laundry_type="dark")
+    coordinator = coordinator_of(hass)
+
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_BULK_SET_STATE,
+        {"new_state": "laundry", "laundry_type": "dark"},
+        blocking=True,
+    )
+    assert coordinator.get_state(socks.entry_id) == "clean"

@@ -9,12 +9,129 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import async_capture_events
 
 from custom_components.wardrobe.const import (
+    CONF_WEIGHT,
     EVENT_NEEDS_WASH,
     EVENT_STATE_CHANGED,
     EVENT_TAG_SCANNED,
 )
 
-from .helpers import coordinator_of, setup_item
+from .helpers import coordinator_of, setup_bulk_item, setup_item
+
+
+async def test_weight_config_seed_and_runtime_override(hass: HomeAssistant) -> None:
+    entry = await setup_item(hass, weight=1.5)
+    coordinator = coordinator_of(hass)
+    assert coordinator.get_weight(entry.entry_id) == 1.5
+
+    await coordinator.async_set_weight(entry.entry_id, 2.0)
+    assert coordinator.get_weight(entry.entry_id) == 2.0
+    # The runtime value lives in storage; the ConfigEntry seed is untouched.
+    assert entry.data[CONF_WEIGHT] == 1.5
+
+
+async def test_weight_defaults_to_one(hass: HomeAssistant) -> None:
+    entry = await setup_item(hass)
+    assert coordinator_of(hass).get_weight(entry.entry_id) == 1.0
+
+
+async def test_bulk_clean_remaining_wear_and_correction(hass: HomeAssistant) -> None:
+    entry = await setup_bulk_item(hass, quantity=5)
+    coordinator = coordinator_of(hass)
+    assert coordinator.get_clean_remaining(entry.entry_id) == 5
+
+    # Lowering the clean count records wears.
+    await coordinator.async_set_clean_remaining(entry.entry_id, 3)
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["dirty_count"] == 2
+    assert rec["wear_count_total"] == 2
+    assert rec["last_worn_at"] is not None
+
+    # Raising it is a silent correction: dirty shrinks, stats untouched.
+    await coordinator.async_set_clean_remaining(entry.entry_id, 4)
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["dirty_count"] == 1
+    assert rec["wear_count_total"] == 2
+
+    # Values clamp to 0..quantity.
+    await coordinator.async_set_clean_remaining(entry.entry_id, 99)
+    assert coordinator.get_record(entry.entry_id)["dirty_count"] == 0
+
+
+async def test_bulk_wear_one_clamps_when_drawer_empty(hass: HomeAssistant) -> None:
+    entry = await setup_bulk_item(hass, quantity=1)
+    coordinator = coordinator_of(hass)
+
+    await coordinator.async_bulk_wear_one(entry.entry_id)
+    await coordinator.async_bulk_wear_one(entry.entry_id)  # nothing clean left
+
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["dirty_count"] == 1
+    assert rec["wear_count_total"] == 1
+    assert coordinator.get_clean_remaining(entry.entry_id) == 0
+
+
+async def test_bulk_mark_washed_resets_dirty_pile(hass: HomeAssistant) -> None:
+    entry = await setup_bulk_item(hass, quantity=4)
+    coordinator = coordinator_of(hass)
+    await coordinator.async_set_clean_remaining(entry.entry_id, 1)
+
+    assert await coordinator.async_bulk_mark_washed(entry.entry_id) is True
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["dirty_count"] == 0
+    assert rec["wash_count"] == 1
+    assert rec["last_washed_at"] is not None
+
+    # Nothing dirty → nothing washed.
+    assert await coordinator.async_bulk_mark_washed(entry.entry_id) is False
+    assert coordinator.get_record(entry.entry_id)["wash_count"] == 1
+
+
+async def test_bulk_mark_washed_dispatch(hass: HomeAssistant) -> None:
+    """The generic mark_washed routes bulk entries to the counter reset."""
+    entry = await setup_bulk_item(hass, quantity=3)
+    coordinator = coordinator_of(hass)
+    await coordinator.async_bulk_wear_one(entry.entry_id)
+
+    await coordinator.async_mark_washed(entry.entry_id)
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["dirty_count"] == 0
+    assert rec["wash_count"] == 1
+    # No state machine involved: the record state never left clean.
+    assert rec["state"] == "clean"
+
+
+async def test_bulk_ignores_state_machine(hass: HomeAssistant) -> None:
+    entry = await setup_bulk_item(hass)
+    coordinator = coordinator_of(hass)
+    events = async_capture_events(hass, EVENT_STATE_CHANGED)
+
+    await coordinator.async_set_state(entry.entry_id, "worn")
+    assert coordinator.get_state(entry.entry_id) == "clean"
+    assert await coordinator.async_cycle_state(entry.entry_id) == "clean"
+    await coordinator.async_mark_worn(entry.entry_id)
+    await hass.async_block_till_done()
+
+    rec = coordinator.get_record(entry.entry_id)
+    assert rec["wear_count_total"] == 0
+    assert not events
+
+
+async def test_load_for_type_mixes_individual_and_bulk(hass: HomeAssistant) -> None:
+    towel = await setup_item(hass, name="Towel", laundry_type="light", weight=1.5)
+    socks = await setup_bulk_item(
+        hass, name="White Socks", laundry_type="light", quantity=6, weight=0.5
+    )
+    other = await setup_item(hass, name="Black Tee", laundry_type="dark")
+    coordinator = coordinator_of(hass)
+
+    await coordinator.async_set_state(towel.entry_id, "laundry")
+    await coordinator.async_set_state(other.entry_id, "laundry")
+    await coordinator.async_set_clean_remaining(socks.entry_id, 2)  # 4 dirty
+
+    names, units, total_weight = coordinator.load_for_type("light")
+    assert names == ["Towel", "White Socks"]
+    assert units == 5  # 1 towel + 4 socks
+    assert total_weight == pytest.approx(3.5)  # 1.5 + 4 × 0.5
 
 
 async def test_new_item_starts_clean(hass: HomeAssistant) -> None:

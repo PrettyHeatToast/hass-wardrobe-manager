@@ -7,7 +7,13 @@ from homeassistant.helpers import entity_registry as er
 
 from custom_components.wardrobe.const import CONF_PURCHASE_PRICE, DOMAIN
 
-from .helpers import coordinator_of, entity_id, hub_entity_id, setup_item
+from .helpers import (
+    coordinator_of,
+    entity_id,
+    hub_entity_id,
+    setup_bulk_item,
+    setup_item,
+)
 
 
 async def test_item_counter_sensors(hass: HomeAssistant) -> None:
@@ -119,3 +125,56 @@ async def test_hub_needs_wash_count(hass: HomeAssistant) -> None:
     await coordinator.async_set_state(entry.entry_id, "laundry")
     await hass.async_block_till_done()
     assert hass.states.get(needs).state == "0"
+
+
+async def test_load_sensor_counts_units_and_exposes_weight(
+    hass: HomeAssistant,
+) -> None:
+    jeans = await setup_item(
+        hass, name="Black Jeans", laundry_type="dark", weight=2.0
+    )
+    socks = await setup_bulk_item(
+        hass, name="Dark Socks", laundry_type="dark", quantity=6, weight=0.5
+    )
+    coordinator = coordinator_of(hass)
+
+    await coordinator.async_set_state(jeans.entry_id, "laundry")
+    await coordinator.async_set_clean_remaining(socks.entry_id, 3)  # 3 dirty
+    await hass.async_block_till_done()
+
+    load = hass.states.get(hub_entity_id(hass, "sensor", "load_dark"))
+    assert load.state == "4"  # 1 pair of jeans + 3 socks
+    assert load.attributes["items"] == ["Black Jeans", "Dark Socks"]
+    assert load.attributes["total_weight"] == 3.5  # 2.0 + 3 × 0.5
+    assert load.attributes["load_threshold"] == 5.0  # default
+
+
+async def test_hub_counts_exclude_bulk_except_total(hass: HomeAssistant) -> None:
+    shirt = await setup_item(hass, name="Shirt")
+    socks = await setup_bulk_item(hass, name="Socks", quantity=5)
+    coordinator = coordinator_of(hass)
+    await coordinator.async_bulk_wear_one(socks.entry_id)
+    await hass.async_block_till_done()
+
+    # State counts ignore the bulk entry (it has no state machine)…
+    assert hass.states.get(hub_entity_id(hass, "sensor", "clean")).state == "1"
+    assert hass.states.get(hub_entity_id(hass, "sensor", "worn")).state == "0"
+    # …but the household total counts it once.
+    assert hass.states.get(hub_entity_id(hass, "sensor", "total")).state == "2"
+
+
+async def test_bulk_item_sensor_set(hass: HomeAssistant) -> None:
+    entry = await setup_bulk_item(hass, quantity=4)
+    registry = er.async_get(hass)
+
+    # Lifetime counters and timestamps exist…
+    for suffix in ("wear_count_total", "wash_count", "last_worn_at", "last_washed_at"):
+        assert entity_id(hass, "sensor", entry, suffix)
+    # …but per-cycle sensors don't apply to bulk items.
+    for suffix in ("wears_since_wash", "state_changed_at"):
+        assert (
+            registry.async_get_entity_id(
+                "sensor", DOMAIN, f"{DOMAIN}_{entry.entry_id}_{suffix}"
+            )
+            is None
+        )

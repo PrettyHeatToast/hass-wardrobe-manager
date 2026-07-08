@@ -15,18 +15,16 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import (
     ATTR_ITEMS,
     ATTR_THRESHOLD,
+    ATTR_TOTAL_WEIGHT,
     ATTR_WEARS_SINCE_WASH,
-    CONF_ITEM_NAME,
     CONF_KIND,
-    CONF_LAUNDRY_TYPE,
     CONF_LOAD_SIZE,
-    DEFAULT_LAUNDRY_TYPE,
-    DEFAULT_LOAD_SIZE,
     DIRTY_STATES,
     DOMAIN,
     KIND_SUMMARY,
     LAUNDRY_TYPES,
-    WardrobeState,
+    is_bulk_entry,
+    load_threshold_for,
 )
 from .coordinator import WardrobeCoordinator
 from .entity import WardrobeHubEntity, WardrobeItemEntity
@@ -45,6 +43,11 @@ async def async_setup_entry(
             WardrobeLoadReadyBinarySensor(coordinator, entry, lt)
             for lt in LAUNDRY_TYPES
         )
+        return
+
+    if is_bulk_entry(entry.data):
+        # Bulk items have no per-item needs-washing indicator; the per-type
+        # load-ready sensors cover them.
         return
 
     async_add_entities([NeedsWashingBinarySensor(coordinator, entry)])
@@ -96,38 +99,25 @@ class WardrobeLoadReadyBinarySensor(WardrobeHubEntity, BinarySensorEntity):
         self._hub_entry = hub_entry
         self._laundry_type = laundry_type
 
-    def _load_size(self) -> int:
-        """Return the configured items-per-load threshold."""
-        return int(self._hub_entry.options.get(CONF_LOAD_SIZE, DEFAULT_LOAD_SIZE))
-
-    def _waiting_items(self) -> list[str]:
-        """Names of items of this type currently in the laundry basket."""
-        items: list[str] = []
-        for entry_id, rec in self.coordinator.data.items():
-            if rec["state"] != WardrobeState.LAUNDRY.value:
-                continue
-            entry = self.hass.config_entries.async_get_entry(entry_id)
-            if entry is None or entry.data.get(CONF_KIND) == KIND_SUMMARY:
-                continue
-            if (
-                entry.data.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE)
-                != self._laundry_type
-            ):
-                continue
-            items.append(entry.data.get(CONF_ITEM_NAME, entry_id))
-        return sorted(items)
+    def _threshold(self) -> float:
+        """Return the effective weight threshold for this laundry type."""
+        return load_threshold_for(self._hub_entry.options, self._laundry_type)
 
     @property
     def is_on(self) -> bool:
-        """True when a full load of this laundry type is waiting."""
-        return len(self._waiting_items()) >= self._load_size()
+        """True when a full load (by weight) of this laundry type is waiting."""
+        _, _, total_weight = self.coordinator.load_for_type(self._laundry_type)
+        return total_weight >= self._threshold()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose the waiting items and the load size."""
-        items = self._waiting_items()
+        """Expose the waiting items, weight and the load threshold."""
+        names, units, total_weight = self.coordinator.load_for_type(
+            self._laundry_type
+        )
         return {
-            ATTR_ITEMS: items,
-            "count": len(items),
-            CONF_LOAD_SIZE: self._load_size(),
+            ATTR_ITEMS: names,
+            "count": units,
+            ATTR_TOTAL_WEIGHT: round(total_weight, 2),
+            CONF_LOAD_SIZE: self._threshold(),
         }

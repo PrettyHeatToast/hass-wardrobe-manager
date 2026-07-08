@@ -17,14 +17,19 @@ from custom_components.wardrobe.const import (
     CONF_NFC_TAG_ID,
     CONF_NOTES,
     CONF_PURCHASE_PRICE,
+    CONF_QUANTITY,
     CONF_SCAN_ACTION,
     CONF_SEASONS,
+    CONF_TRACKING_MODE,
     CONF_WEAR_THRESHOLD,
+    CONF_WEIGHT,
     DOMAIN,
     KIND_SUMMARY,
+    TrackingMode,
+    load_size_key,
 )
 
-from .helpers import setup_item
+from .helpers import setup_bulk_item, setup_item
 
 BASICS = {
     CONF_ITEM_NAME: "White Tee",
@@ -206,3 +211,94 @@ async def test_hub_options_set_load_size(hass: HomeAssistant) -> None:
     assert result["type"] == FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     assert hub.options[CONF_LOAD_SIZE] == 3
+
+
+async def test_full_creation_persists_weight(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], BASICS)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {**TRACKING, CONF_WEIGHT: 1.5}
+    )
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_WEIGHT] == 1.5
+    assert result["data"][CONF_TRACKING_MODE] == TrackingMode.INDIVIDUAL
+
+
+async def test_bulk_creation_flow(hass: HomeAssistant) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_ITEM_NAME: "Black Socks",
+            CONF_CATEGORY: "socks",
+            CONF_LAUNDRY_TYPE: "dark",
+            CONF_TRACKING_MODE: TrackingMode.BULK.value,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "bulk"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_QUANTITY: 8, CONF_WEIGHT: 0.5}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "details"
+
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    data = result["data"]
+    assert data[CONF_TRACKING_MODE] == TrackingMode.BULK
+    assert data[CONF_QUANTITY] == 8
+    assert data[CONF_WEIGHT] == 0.5
+    # Neutral tracking defaults so downstream lookups stay uniform.
+    assert data[CONF_NFC_TAG_ID] is None
+    assert data[CONF_EXTRA_STATES] == []
+    assert data[CONF_WEAR_THRESHOLD] == 0
+
+
+async def test_bulk_options_menu_has_no_tracking(hass: HomeAssistant) -> None:
+    entry = await setup_bulk_item(hass, quantity=10)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == FlowResultType.MENU
+    assert result["menu_options"] == ["basics", "details"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "basics"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_CATEGORY: "socks", CONF_LAUNDRY_TYPE: "color", CONF_QUANTITY: 12},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.data[CONF_QUANTITY] == 12
+    assert entry.data[CONF_LAUNDRY_TYPE] == "color"
+
+
+async def test_hub_options_per_type_overrides(hass: HomeAssistant) -> None:
+    await setup_item(hass)
+    hub = next(
+        e
+        for e in hass.config_entries.async_entries(DOMAIN)
+        if e.data.get(CONF_KIND) == KIND_SUMMARY
+    )
+
+    result = await hass.config_entries.options.async_init(hub.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_LOAD_SIZE: 4, load_size_key("wool"): 1.5}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+
+    assert hub.options[CONF_LOAD_SIZE] == 4
+    assert hub.options[load_size_key("wool")] == 1.5
+    # Types left blank get no override key → they fall back to the default.
+    assert load_size_key("dark") not in hub.options

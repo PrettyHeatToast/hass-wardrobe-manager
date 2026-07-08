@@ -19,6 +19,8 @@ from .const import (
     ATTR_BY_CATEGORY,
     ATTR_BY_LAUNDRY_TYPE,
     ATTR_ITEMS,
+    ATTR_LOAD_THRESHOLD,
+    ATTR_TOTAL_WEIGHT,
     CONF_CATEGORY,
     CONF_ITEM_NAME,
     CONF_KIND,
@@ -31,6 +33,8 @@ from .const import (
     KIND_SUMMARY,
     LAUNDRY_TYPES,
     WardrobeState,
+    is_bulk_entry,
+    load_threshold_for,
 )
 from .coordinator import WardrobeCoordinator
 from .entity import WardrobeHubEntity, WardrobeItemEntity
@@ -55,13 +59,12 @@ async def async_setup_entry(
         entities.append(WardrobeTotalItemsSensor(coordinator))
         entities.append(WardrobeNeedsWashCountSensor(coordinator))
         entities.extend(
-            WardrobeLaundryLoadSensor(coordinator, lt) for lt in LAUNDRY_TYPES
+            WardrobeLaundryLoadSensor(coordinator, entry, lt) for lt in LAUNDRY_TYPES
         )
         async_add_entities(entities)
         return
 
     item_entities: list[SensorEntity] = [
-        WardrobeCounterSensor(coordinator, entry, "wears_since_wash"),
         WardrobeCounterSensor(
             coordinator, entry, "wear_count_total", SensorStateClass.TOTAL_INCREASING
         ),
@@ -70,8 +73,15 @@ async def async_setup_entry(
         ),
         WardrobeTimestampSensor(coordinator, entry, "last_worn_at"),
         WardrobeTimestampSensor(coordinator, entry, "last_washed_at"),
-        WardrobeTimestampSensor(coordinator, entry, "state_changed_at"),
     ]
+    if not is_bulk_entry(entry.data):
+        # Bulk items have no state machine, so per-cycle fields don't apply.
+        item_entities.extend(
+            [
+                WardrobeCounterSensor(coordinator, entry, "wears_since_wash"),
+                WardrobeTimestampSensor(coordinator, entry, "state_changed_at"),
+            ]
+        )
     if entry.data.get(CONF_PURCHASE_PRICE) is not None:
         item_entities.append(WardrobeCostPerWearSensor(coordinator, entry))
     async_add_entities(item_entities)
@@ -160,12 +170,18 @@ class _HubSensorBase(WardrobeHubEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:wardrobe-outline"
 
+    # Bulk items sit outside the state machine, so state-based counts skip
+    # them; only the total-items sensor opts back in.
+    _include_bulk = False
+
     def _matching_entries(self) -> list[tuple[ConfigEntry, dict[str, Any]]]:
         """Yield (entry, record) pairs this sensor counts."""
         out: list[tuple[ConfigEntry, dict[str, Any]]] = []
         for entry_id, rec in self.coordinator.data.items():
             entry = self.hass.config_entries.async_get_entry(entry_id)
             if entry is None or entry.data.get(CONF_KIND) == KIND_SUMMARY:
+                continue
+            if not self._include_bulk and is_bulk_entry(entry.data):
                 continue
             if self._matches(entry, rec):
                 out.append((entry, rec))
@@ -228,7 +244,9 @@ class WardrobePipelineCountSensor(_HubSensorBase):
 
 
 class WardrobeTotalItemsSensor(_HubSensorBase):
-    """Total number of tracked clothing items."""
+    """Total number of tracked clothing items (bulk entries count once)."""
+
+    _include_bulk = True
 
     def __init__(self, coordinator: WardrobeCoordinator) -> None:
         """Initialize the total-items sensor."""
@@ -255,18 +273,43 @@ class WardrobeNeedsWashCountSensor(_HubSensorBase):
 
 
 class WardrobeLaundryLoadSensor(_HubSensorBase):
-    """Number of items of one laundry type waiting in the laundry basket."""
+    """Units of one laundry type waiting in the laundry basket.
+
+    Individual items count one unit each; bulk items count their dirty
+    units. The summed weight and the effective threshold are attributes.
+    """
 
     _attr_icon = "mdi:basket"
 
-    def __init__(self, coordinator: WardrobeCoordinator, laundry_type: str) -> None:
+    def __init__(
+        self,
+        coordinator: WardrobeCoordinator,
+        hub_entry: ConfigEntry,
+        laundry_type: str,
+    ) -> None:
         """Initialize the load sensor for one laundry type."""
         super().__init__(coordinator, f"load_{laundry_type}")
+        self._hub_entry = hub_entry
         self._laundry_type = laundry_type
 
     def _matches(self, entry: ConfigEntry, rec: dict[str, Any]) -> bool:
-        return (
-            rec["state"] == WardrobeState.LAUNDRY.value
-            and entry.data.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE)
-            == self._laundry_type
-        )
+        # Unused: native_value/attributes read the coordinator load helper.
+        raise NotImplementedError
+
+    @property
+    def native_value(self) -> int:
+        """Return the number of waiting units."""
+        _, units, _ = self.coordinator.load_for_type(self._laundry_type)
+        return units
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Expose the waiting items, their weight and the load threshold."""
+        names, _, total_weight = self.coordinator.load_for_type(self._laundry_type)
+        return {
+            ATTR_ITEMS: names,
+            ATTR_TOTAL_WEIGHT: round(total_weight, 2),
+            ATTR_LOAD_THRESHOLD: load_threshold_for(
+                self._hub_entry.options, self._laundry_type
+            ),
+        }

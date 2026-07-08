@@ -16,11 +16,15 @@ from custom_components.wardrobe.const import (
     CONF_ITEM_NAME,
     CONF_LAUNDRY_TYPE,
     CONF_NFC_TAG_ID,
+    CONF_QUANTITY,
     CONF_SCAN_ACTION,
+    CONF_TRACKING_MODE,
     CONF_WEAR_THRESHOLD,
+    CONF_WEIGHT,
     DEFAULT_LAUNDRY_TYPE,
     DEFAULT_SCAN_ACTION,
     DOMAIN,
+    TrackingMode,
 )
 
 
@@ -31,12 +35,17 @@ def make_item(
     laundry_type: str = DEFAULT_LAUNDRY_TYPE,
     nfc_tag_id: str | None = None,
     wear_threshold: int = 0,
+    weight: float | None = None,
     scan_action: str = DEFAULT_SCAN_ACTION,
     extra_states: list[str] | None = None,
     entry_id: str | None = None,
     **details: Any,
 ) -> MockConfigEntry:
-    """Build a MockConfigEntry shaped like a v2 clothing item."""
+    """Build a MockConfigEntry shaped like a v2 clothing item.
+
+    ``weight`` is omitted from data when None so default-seeding paths get
+    exercised (pre-2.1 entries had no weight key).
+    """
     data: dict[str, Any] = {
         CONF_ITEM_NAME: name,
         CONF_CATEGORY: category,
@@ -47,6 +56,8 @@ def make_item(
         CONF_WEAR_THRESHOLD: wear_threshold,
         **details,
     }
+    if weight is not None:
+        data[CONF_WEIGHT] = weight
     kwargs: dict[str, Any] = {}
     if entry_id is not None:
         kwargs["entry_id"] = entry_id
@@ -59,9 +70,43 @@ def make_item(
     )
 
 
+def make_bulk_item(
+    *,
+    name: str = "Black Socks",
+    category: str = "socks",
+    laundry_type: str = DEFAULT_LAUNDRY_TYPE,
+    quantity: int = 10,
+    weight: float | None = None,
+    entry_id: str | None = None,
+    **details: Any,
+) -> MockConfigEntry:
+    """Build a MockConfigEntry shaped like a bulk (counter-tracked) item."""
+    return make_item(
+        name=name,
+        category=category,
+        laundry_type=laundry_type,
+        weight=weight,
+        entry_id=entry_id,
+        **{
+            CONF_TRACKING_MODE: TrackingMode.BULK.value,
+            CONF_QUANTITY: quantity,
+        },
+        **details,
+    )
+
+
 async def setup_item(hass: HomeAssistant, **kwargs: Any) -> MockConfigEntry:
     """Create, register and fully set up an item entry."""
     entry = make_item(**kwargs)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def setup_bulk_item(hass: HomeAssistant, **kwargs: Any) -> MockConfigEntry:
+    """Create, register and fully set up a bulk item entry."""
+    entry = make_bulk_item(**kwargs)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()

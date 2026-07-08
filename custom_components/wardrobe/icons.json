@@ -1,0 +1,11 @@
+{
+  "services": {
+    "cycle_state": "mdi:rotate-right",
+    "set_state": "mdi:swap-horizontal",
+    "mark_worn": "mdi:account-check",
+    "mark_washed": "mdi:washing-machine",
+    "reset_statistics": "mdi:restore",
+    "bulk_set_state": "mdi:select-group",
+    "wash_load": "mdi:washing-machine"
+  }
+}

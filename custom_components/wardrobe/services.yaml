@@ -164,7 +164,8 @@ wash_load:
   description: >-
     Complete a wash cycle. Every dirty item (in laundry, washing, drying or
     ironing) — optionally limited to one laundry type — returns to clean with
-    its wash count incremented. Fires the wardrobe_wash_completed event.
+    its wash count incremented. Bulk items get their dirty units reset too.
+    Fires the wardrobe_wash_completed event.
   fields:
     laundry_type:
       name: Laundry-type filter

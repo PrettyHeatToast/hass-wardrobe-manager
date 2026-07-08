@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import Final
+from typing import Any, Final
 
 from homeassistant.const import Platform
 
@@ -26,7 +27,7 @@ HUB_PLATFORMS: Final = [
 ]
 
 STORAGE_KEY: Final = "wardrobe_states"
-STORAGE_VERSION: Final = 3
+STORAGE_VERSION: Final = 4
 
 # ---------------------------------------------------------------------------
 # ConfigEntry data keys
@@ -48,10 +49,35 @@ CONF_LOCATION: Final = "location"
 CONF_PURCHASE_DATE: Final = "purchase_date"
 CONF_PURCHASE_PRICE: Final = "purchase_price"
 CONF_NOTES: Final = "notes"
+CONF_WEIGHT: Final = "weight"
+CONF_TRACKING_MODE: Final = "tracking_mode"
+CONF_QUANTITY: Final = "quantity"
 
-# Hub option keys
+# How much a single unit of an item weighs toward a laundry load.
+DEFAULT_WEIGHT: Final = 1.0
+DEFAULT_QUANTITY: Final = 10
+
+# Hub option keys. CONF_LOAD_SIZE is the global default load threshold
+# (a weight sum); per-type overrides live under load_size_<laundry_type>.
 CONF_LOAD_SIZE: Final = "load_size"
 DEFAULT_LOAD_SIZE: Final = 5
+
+
+def load_size_key(laundry_type: str) -> str:
+    """Return the hub-options key holding the per-type load threshold."""
+    return f"{CONF_LOAD_SIZE}_{laundry_type}"
+
+
+def load_threshold_for(options: Mapping[str, Any], laundry_type: str) -> float:
+    """Return the effective load threshold (weight sum) for a laundry type.
+
+    Pure function: per-type override wins, then the global ``load_size``
+    option, then the built-in default.
+    """
+    value = options.get(
+        load_size_key(laundry_type), options.get(CONF_LOAD_SIZE, DEFAULT_LOAD_SIZE)
+    )
+    return float(value)
 
 DEFAULT_WEAR_THRESHOLD: Final = 0  # 0 disables threshold-aware cycling
 
@@ -99,6 +125,11 @@ ATTR_BY_LAUNDRY_TYPE: Final = "by_laundry_type"
 ATTR_FILTER_CATEGORY: Final = "category"
 ATTR_FILTER_LAUNDRY_TYPE: Final = "laundry_type"
 ATTR_FILTER_CURRENT_STATE: Final = "current_state"
+ATTR_TOTAL_WEIGHT: Final = "total_weight"
+ATTR_LOAD_THRESHOLD: Final = "load_threshold"
+ATTR_DIRTY_COUNT: Final = "dirty_count"
+ATTR_CLEAN_REMAINING: Final = "clean_remaining"
+ATTR_QUANTITY: Final = "quantity"
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +232,31 @@ class ScanAction(StrEnum):
 
 SCAN_ACTIONS: Final = [action.value for action in ScanAction]
 DEFAULT_SCAN_ACTION: Final = ScanAction.CYCLE.value
+
+
+# ---------------------------------------------------------------------------
+# Tracking modes
+# ---------------------------------------------------------------------------
+
+
+class TrackingMode(StrEnum):
+    """How an item is tracked.
+
+    ``individual`` items run the full state machine; ``bulk`` items (socks,
+    underwear, ...) are owned in quantity and tracked by a clean/dirty counter.
+    """
+
+    INDIVIDUAL = "individual"
+    BULK = "bulk"
+
+
+TRACKING_MODES: Final = [mode.value for mode in TrackingMode]
+DEFAULT_TRACKING_MODE: Final = TrackingMode.INDIVIDUAL.value
+
+
+def is_bulk_entry(data: Mapping[str, Any]) -> bool:
+    """Return True when a ConfigEntry's data marks it as a bulk item."""
+    return data.get(CONF_TRACKING_MODE, DEFAULT_TRACKING_MODE) == TrackingMode.BULK
 
 
 # ---------------------------------------------------------------------------

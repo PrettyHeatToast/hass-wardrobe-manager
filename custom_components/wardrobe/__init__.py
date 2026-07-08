@@ -37,6 +37,7 @@ from .const import (
     SERVICE_BULK_SET_STATE,
     SERVICE_WASH_LOAD,
     ScanAction,
+    is_bulk_entry,
 )
 from .coordinator import WardrobeCoordinator
 
@@ -200,6 +201,8 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
 
         matched = 0
         for entry in _item_entries(hass):
+            if is_bulk_entry(entry.data):
+                continue  # bulk items have no state machine
             if cat_filter and entry.data.get(CONF_CATEGORY) != cat_filter:
                 continue
             if lt_filter and entry.data.get(CONF_LAUNDRY_TYPE) != lt_filter:
@@ -225,6 +228,10 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
         washed: list[str] = []
         for entry in _item_entries(hass):
             if lt_filter and entry.data.get(CONF_LAUNDRY_TYPE) != lt_filter:
+                continue
+            if is_bulk_entry(entry.data):
+                if await coordinator.async_bulk_mark_washed(entry.entry_id):
+                    washed.append(entry.data.get(CONF_ITEM_NAME, entry.entry_id))
                 continue
             if coordinator.get_state(entry.entry_id) not in DIRTY_STATES:
                 continue

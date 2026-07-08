@@ -21,17 +21,25 @@ from .const import (
     ATTR_WEARS_SINCE_WASH,
     CONF_EXTRA_STATES,
     CONF_ITEM_NAME,
+    CONF_KIND,
+    CONF_LAUNDRY_TYPE,
+    CONF_QUANTITY,
     CONF_WEAR_THRESHOLD,
+    CONF_WEIGHT,
+    DEFAULT_LAUNDRY_TYPE,
     DEFAULT_STATE,
     DEFAULT_WEAR_THRESHOLD,
+    DEFAULT_WEIGHT,
     DIRTY_STATES,
     DOMAIN,
     EVENT_NEEDS_WASH,
     EVENT_STATE_CHANGED,
+    KIND_SUMMARY,
     STORAGE_KEY,
     STORAGE_VERSION,
     WardrobeState,
     build_cycle,
+    is_bulk_entry,
     next_state_in,
 )
 
@@ -49,10 +57,15 @@ class WardrobeRecord(TypedDict):
     last_washed_at: str | None
     state_changed_at: str | None
     wear_threshold: int | None
+    weight: float | None
+    dirty_count: int
 
 
 def _new_record(
-    *, state: str = DEFAULT_STATE, wear_threshold: int | None = None
+    *,
+    state: str = DEFAULT_STATE,
+    wear_threshold: int | None = None,
+    weight: float | None = None,
 ) -> WardrobeRecord:
     """Return a fully-populated default record."""
     return {
@@ -64,6 +77,8 @@ def _new_record(
         "last_washed_at": None,
         "state_changed_at": None,
         "wear_threshold": wear_threshold,
+        "weight": weight,
+        "dirty_count": 0,
     }
 
 
@@ -71,8 +86,8 @@ def _coerce_record(value: Any) -> WardrobeRecord:
     """Coerce a stored value into a complete WardrobeRecord.
 
     Defensive merge so half-populated rows (hand edits, older minor versions)
-    don't KeyError downstream. A missing ``wear_threshold`` stays ``None`` so
-    ``async_ensure_entry`` can seed it from the ConfigEntry.
+    don't KeyError downstream. A missing ``wear_threshold`` or ``weight``
+    stays ``None`` so ``async_ensure_entry`` can seed it from the ConfigEntry.
     """
     base = _new_record()
     if isinstance(value, dict):
@@ -91,11 +106,17 @@ def _coerce_record(value: Any) -> WardrobeRecord:
         v = value.get("wear_threshold")
         if isinstance(v, int) and v >= 0:
             base["wear_threshold"] = v
+        v = value.get("weight")
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            base["weight"] = float(v)
+        v = value.get("dirty_count")
+        if isinstance(v, int) and v >= 0:
+            base["dirty_count"] = v
     return base
 
 
 class WardrobeStore(Store[dict[str, Any]]):
-    """Store subclass that migrates v1/v2 payloads to v3."""
+    """Store subclass that migrates v1/v2/v3 payloads to v4."""
 
     async def _async_migrate_func(
         self,
@@ -103,13 +124,14 @@ class WardrobeStore(Store[dict[str, Any]]):
         old_minor_version: int,
         old_data: dict[str, Any],
     ) -> dict[str, Any]:
-        """Lift older storage payloads into v3 records.
+        """Lift older storage payloads into v4 records.
 
         v1 rows were bare state strings; v2 rows were records without
-        ``wash_count`` / ``last_washed_at`` / ``wear_threshold``.
-        ``_coerce_record`` fills every gap, so both lift the same way.
+        ``wash_count`` / ``last_washed_at`` / ``wear_threshold``; v3 rows
+        lacked ``weight`` / ``dirty_count``. ``_coerce_record`` fills every
+        gap, so all lift the same way.
         """
-        if old_major_version in (1, 2):
+        if old_major_version in (1, 2, 3):
             entries_old = old_data.get("entries", {}) or {}
             entries_new: dict[str, WardrobeRecord] = {}
             for entry_id, value in entries_old.items():
@@ -167,16 +189,24 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
             _LOGGER.error("Failed to save wardrobe state", exc_info=True)
 
     async def async_ensure_entry(self, entry_id: str) -> None:
-        """Seed an entry's record, syncing the threshold from config on first run."""
+        """Seed an entry's record, syncing seeded fields from config on first run."""
         rec = self.data.get(entry_id)
-        initial = self._config_threshold(entry_id)
         if rec is None:
-            self.data[entry_id] = _new_record(wear_threshold=initial)
-        elif rec["wear_threshold"] is None:
-            # Migrated record: adopt the threshold configured on the entry.
-            rec["wear_threshold"] = initial
+            self.data[entry_id] = _new_record(
+                wear_threshold=self._config_threshold(entry_id),
+                weight=self._config_weight(entry_id),
+            )
         else:
-            return
+            changed = False
+            if rec["wear_threshold"] is None:
+                # Migrated record: adopt the threshold configured on the entry.
+                rec["wear_threshold"] = self._config_threshold(entry_id)
+                changed = True
+            if rec["weight"] is None:
+                rec["weight"] = self._config_weight(entry_id)
+                changed = True
+            if not changed:
+                return
         await self._async_save()
         self.async_set_updated_data(self.data)
 
@@ -210,6 +240,52 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
             return int(rec["wear_threshold"])
         return self._config_threshold(entry_id)
 
+    def get_weight(self, entry_id: str) -> float:
+        """Return the effective per-unit load weight for an entry."""
+        rec = self.data.get(entry_id)
+        if rec is not None and rec["weight"] is not None:
+            return float(rec["weight"])
+        return self._config_weight(entry_id)
+
+    def get_clean_remaining(self, entry_id: str) -> int:
+        """Return how many clean units of a bulk item remain."""
+        rec = self.data.get(entry_id)
+        dirty = 0 if rec is None else int(rec["dirty_count"])
+        return max(0, self._config_quantity(entry_id) - dirty)
+
+    def load_for_type(self, laundry_type: str) -> tuple[list[str], int, float]:
+        """Return ``(names, units, total_weight)`` waiting for a laundry type.
+
+        Individual items in ``laundry`` contribute one unit of their weight;
+        bulk items contribute ``dirty_count`` units of theirs (named once).
+        """
+        names: list[str] = []
+        units = 0
+        total_weight = 0.0
+        for entry_id, rec in self.data.items():
+            entry = self.hass.config_entries.async_get_entry(entry_id)
+            if entry is None or entry.data.get(CONF_KIND) == KIND_SUMMARY:
+                continue
+            if (
+                entry.data.get(CONF_LAUNDRY_TYPE, DEFAULT_LAUNDRY_TYPE)
+                != laundry_type
+            ):
+                continue
+            if is_bulk_entry(entry.data):
+                dirty = int(rec["dirty_count"])
+                if dirty <= 0:
+                    continue
+                names.append(entry.data.get(CONF_ITEM_NAME, entry_id))
+                units += dirty
+                total_weight += dirty * self.get_weight(entry_id)
+            else:
+                if rec["state"] != WardrobeState.LAUNDRY.value:
+                    continue
+                names.append(entry.data.get(CONF_ITEM_NAME, entry_id))
+                units += 1
+                total_weight += self.get_weight(entry_id)
+        return sorted(names), units, total_weight
+
     def count_by_state(self) -> dict[str, int]:
         """Return a map of state → number of entries currently in that state."""
         counts = {s: 0 for s in ALL_STATES}
@@ -223,6 +299,25 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
         if entry is None:
             return DEFAULT_WEAR_THRESHOLD
         return int(entry.data.get(CONF_WEAR_THRESHOLD, DEFAULT_WEAR_THRESHOLD) or 0)
+
+    def _config_weight(self, entry_id: str) -> float:
+        """Return the weight configured on the ConfigEntry (creation default)."""
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            return DEFAULT_WEIGHT
+        return float(entry.data.get(CONF_WEIGHT, DEFAULT_WEIGHT) or DEFAULT_WEIGHT)
+
+    def _config_quantity(self, entry_id: str) -> int:
+        """Return the owned quantity configured on a bulk ConfigEntry."""
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            return 1
+        return max(1, int(entry.data.get(CONF_QUANTITY, 1) or 1))
+
+    def _is_bulk(self, entry_id: str) -> bool:
+        """Return True when the entry is a bulk (counter-tracked) item."""
+        entry = self.hass.config_entries.async_get_entry(entry_id)
+        return entry is not None and is_bulk_entry(entry.data)
 
     def _cycle_for(self, entry_id: str) -> list[str]:
         """Return the state cycle for an entry, honoring its extra states."""
@@ -246,6 +341,57 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
         await self._async_save()
         self.async_set_updated_data(self.data)
 
+    async def async_set_weight(self, entry_id: str, value: float) -> None:
+        """Set the runtime per-unit load weight for an entry."""
+        rec = dict(self.data.get(entry_id) or _new_record())  # type: ignore[arg-type]
+        rec["weight"] = max(0.1, float(value))
+        self.data[entry_id] = rec  # type: ignore[assignment]
+        await self._async_save()
+        self.async_set_updated_data(self.data)
+
+    async def async_set_clean_remaining(self, entry_id: str, value: int) -> None:
+        """Set how many clean units of a bulk item remain.
+
+        Lowering the count means units were worn: the difference is added to
+        ``dirty_count`` and ``wear_count_total`` and ``last_worn_at`` is
+        stamped. Raising it is a silent correction (dirty units removed
+        without wash accounting). No events fire either way.
+        """
+        quantity = self._config_quantity(entry_id)
+        rec = dict(self.data.get(entry_id) or _new_record())  # type: ignore[arg-type]
+        old_dirty = int(rec["dirty_count"])
+        new_clean = min(max(0, int(value)), quantity)
+        new_dirty = quantity - new_clean
+        if new_dirty == old_dirty:
+            return
+        if new_dirty > old_dirty:
+            worn = new_dirty - old_dirty
+            rec["wear_count_total"] = int(rec["wear_count_total"]) + worn
+            rec["last_worn_at"] = dt_util.utcnow().isoformat()
+        rec["dirty_count"] = new_dirty
+        self.data[entry_id] = rec  # type: ignore[assignment]
+        await self._async_save()
+        self.async_set_updated_data(self.data)
+
+    async def async_bulk_wear_one(self, entry_id: str) -> None:
+        """Record putting on one unit of a bulk item (clean → dirty)."""
+        await self.async_set_clean_remaining(
+            entry_id, self.get_clean_remaining(entry_id) - 1
+        )
+
+    async def async_bulk_mark_washed(self, entry_id: str) -> bool:
+        """Wash a bulk item's dirty units. Returns True if anything was dirty."""
+        rec = dict(self.data.get(entry_id) or _new_record())  # type: ignore[arg-type]
+        if int(rec["dirty_count"]) <= 0:
+            return False
+        rec["dirty_count"] = 0
+        rec["wash_count"] = int(rec["wash_count"]) + 1
+        rec["last_washed_at"] = dt_util.utcnow().isoformat()
+        self.data[entry_id] = rec  # type: ignore[assignment]
+        await self._async_save()
+        self.async_set_updated_data(self.data)
+        return True
+
     async def async_set_state(self, entry_id: str, new_state: str) -> None:
         """Set an entry's state with full wear/wash accounting.
 
@@ -255,6 +401,9 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
         """
         if new_state not in ALL_STATES:
             raise ValueError(f"Invalid wardrobe state: {new_state!r}")
+        if self._is_bulk(entry_id):
+            _LOGGER.debug("Ignoring state change for bulk item %s", entry_id)
+            return
 
         rec = dict(self.data.get(entry_id) or _new_record())  # type: ignore[arg-type]
         old_state = rec["state"]
@@ -302,6 +451,9 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
 
     async def async_mark_worn(self, entry_id: str) -> None:
         """Mark an item as worn: transition to worn, or count a re-wear."""
+        if self._is_bulk(entry_id):
+            _LOGGER.debug("Ignoring mark_worn for bulk item %s", entry_id)
+            return
         if self.get_state(entry_id) == WardrobeState.WORN.value:
             await self.async_record_wear(entry_id)
         else:
@@ -309,6 +461,9 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
 
     async def async_mark_washed(self, entry_id: str) -> None:
         """Mark an item as freshly washed regardless of its current state."""
+        if self._is_bulk(entry_id):
+            await self.async_bulk_mark_washed(entry_id)
+            return
         rec = dict(self.data.get(entry_id) or _new_record())  # type: ignore[arg-type]
         old_state = rec["state"]
         now_iso = dt_util.utcnow().isoformat()
@@ -331,6 +486,9 @@ class WardrobeCoordinator(DataUpdateCoordinator[dict[str, WardrobeRecord]]):
         record another wear (state stays ``worn``). The call after the
         threshold is reached transitions onward as normal.
         """
+        if self._is_bulk(entry_id):
+            _LOGGER.debug("Ignoring cycle_state for bulk item %s", entry_id)
+            return self.get_state(entry_id)
         current = self.get_state(entry_id)
         threshold = self.get_threshold(entry_id)
         if (
