@@ -1,0 +1,96 @@
+# =============================================================================
+# Wardrobe — "this item needs to go in the laundry" actionable alert
+# =============================================================================
+#
+# Two automations that work as a pair:
+#
+#   1. wardrobe_needs_wash_notify   – fires when ANY item hits its wear
+#      threshold (the integration's `wardrobe_needs_wash` event) and sends an
+#      actionable push notification with a "Put in laundry" button.
+#
+#   2. wardrobe_needs_wash_action   – handles the button press and moves that
+#      exact item to the `laundry` state via `wardrobe.set_state`.
+#
+# Requirements
+# ------------
+# * The Home Assistant Companion app (actionable notifications only work
+#   through `notify.mobile_app_*`). Replace `notify.mobile_app_your_phone`
+#   below with your own device's notify service.
+# * The `wardrobe_needs_wash` event only fires when an item has a wear
+#   threshold > 0 (set per item via its "Wears per wash cycle" number entity).
+#
+# The item is identified by its ConfigEntry id (`entry_id`), carried on the
+# event. We resolve that to the item's `select.*_state` entity id with a
+# template so the same automation covers every current and future item — no
+# per-item editing needed.
+#
+# Classic automation syntax (trigger/condition/action + service) so it loads on
+# every supported core (HA 2024.3+).
+# =============================================================================
+
+- id: wardrobe_needs_wash_notify
+  alias: "Wardrobe: item needs washing → notify"
+  description: >-
+    When a garment reaches its wear threshold, push an actionable alert with a
+    button that drops it straight into the laundry basket.
+  mode: parallel          # several items can cross the threshold at once
+  max: 20
+  trigger:
+    - platform: event
+      event_type: wardrobe_needs_wash
+  variables:
+    # Resolve the ConfigEntry id from the event to the item's state select
+    # entity (unique_id = wardrobe_<entry_id>_state).
+    target_entity: >-
+      {% set ns = namespace(eid=none) %}
+      {% for e in integration_entities('wardrobe') if e.startswith('select.') %}
+        {% if config_entry_id(e) == trigger.event.data.entry_id %}
+          {% set ns.eid = e %}
+        {% endif %}
+      {% endfor %}
+      {{ ns.eid }}
+    item_name: "{{ trigger.event.data.name }}"
+  action:
+    - service: notify.mobile_app_your_phone     # <-- CHANGE ME
+      data:
+        title: "🧺 Time to wash {{ item_name }}"
+        message: >-
+          You've worn {{ item_name }}
+          {{ trigger.event.data.wears_since_wash }} times
+          (threshold {{ trigger.event.data.threshold }}).
+        data:
+          tag: "wardrobe_needs_wash_{{ trigger.event.data.entry_id }}"
+          actions:
+            # The action id encodes the resolved entity id after the pipe so
+            # the handler automation knows exactly which item to move.
+            - action: "WARDROBE_TO_LAUNDRY|{{ target_entity }}"
+              title: "Put in laundry"
+              icon: "sfsymbols:basket"
+
+- id: wardrobe_needs_wash_action
+  alias: "Wardrobe: 'Put in laundry' button pressed"
+  description: >-
+    Handles the actionable-notification button from
+    wardrobe_needs_wash_notify and sets that item to the laundry state.
+  mode: parallel
+  max: 20
+  trigger:
+    - platform: event
+      event_type: mobile_app_notification_action
+  condition:
+    - condition: template
+      value_template: >-
+        {{ trigger.event.data.action.startswith('WARDROBE_TO_LAUNDRY|') }}
+  action:
+    - service: wardrobe.set_state
+      target:
+        entity_id: "{{ trigger.event.data.action.split('|')[1] }}"
+      data:
+        state: laundry
+    # Clear the notification now that it's been actioned.
+    - service: notify.mobile_app_your_phone     # <-- CHANGE ME
+      data:
+        message: clear_notification
+        data:
+          tag: >-
+            wardrobe_needs_wash_{{ config_entry_id(trigger.event.data.action.split('|')[1]) }}

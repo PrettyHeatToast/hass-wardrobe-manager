@@ -1,0 +1,105 @@
+# =============================================================================
+# Wardrobe — focused-item dashboard view (driven by the scan helper)
+# =============================================================================
+#
+# One card that always shows whichever item input_text.wardrobe_focused_item
+# currently points at — populated by the scan-to-focus automation. Actions
+# (Wore it / Laundry / Washed) operate on that focused item.
+#
+# Requires the config-template-card custom card (HACS → Frontend →
+# "config-template-card") so entity ids can be templated from the helper.
+#
+# Where it goes
+# -------------
+# Put this as the ONLY card of a dedicated view so `command_webview` can open
+# it full-screen. Create a dashboard (Settings → Dashboards → +), give it a
+# url path (e.g. `wardrobe`), add a view with path `item`, then paste this in
+# that view's raw config. The resulting path `/wardrobe/item` must match
+# `dashboard_path` in scan_to_focus.yaml.
+#
+# How the templating works
+# ------------------------
+# `vars.sel`    = the helper value, e.g. "select.wool_coat_state".
+# `vars.prefix` = the item's object-id prefix, e.g. "wool_coat", derived by
+#                 stripping the "_state" suffix — so sibling entities are
+#                 `sensor.<prefix>_total_wears`, etc. (robust to name clashes,
+#                 since the whole prefix incl. any "_2" is reused).
+# Before the first scan the helper is empty and the rows read "unavailable".
+# =============================================================================
+
+type: custom:config-template-card
+variables:
+  - sel: "states['input_text.wardrobe_focused_item'].state"
+  - prefix: "vars.sel ? vars.sel.split('.')[1].replace(/_state$/, '') : ''"
+entities:
+  - input_text.wardrobe_focused_item
+  - "${vars.sel}"
+card:
+  type: vertical-stack
+  cards:
+    - type: markdown
+      content: >-
+        ## ${ vars.sel ? (states[vars.sel].attributes.friendly_name ||
+        '').replace(/ State$/, '') : '👕 Scan an item to begin' }
+
+    - type: conditional
+      conditions:
+        - condition: state
+          entity: input_text.wardrobe_focused_item
+          state_not: ""
+      card:
+        type: entities
+        show_header_toggle: false
+        entities:
+          - entity: "${vars.sel}"
+            name: State
+          - entity: "${ 'number.' + vars.prefix + '_wears_per_wash_cycle' }"
+            name: Wears per wash
+          - type: divider
+          - entity: "${ 'sensor.' + vars.prefix + '_wears_since_wash' }"
+            name: Wears since wash
+          - entity: "${ 'sensor.' + vars.prefix + '_total_wears' }"
+            name: Total wears
+          - entity: "${ 'sensor.' + vars.prefix + '_wash_count' }"
+            name: Times washed
+          - entity: "${ 'sensor.' + vars.prefix + '_last_worn' }"
+            name: Last worn
+          - entity: "${ 'sensor.' + vars.prefix + '_last_washed' }"
+            name: Last washed
+
+    # Actions operate on the focused item (the wardrobe.* entity services
+    # target its state-select entity).
+    - type: conditional
+      conditions:
+        - condition: state
+          entity: input_text.wardrobe_focused_item
+          state_not: ""
+      card:
+        type: horizontal-stack
+        cards:
+          - type: button
+            name: Wore it
+            icon: mdi:account-check
+            tap_action:
+              action: call-service
+              service: wardrobe.mark_worn
+              target:
+                entity_id: "${vars.sel}"
+          - type: button
+            name: Laundry
+            icon: mdi:basket
+            tap_action:
+              action: call-service
+              service: wardrobe.set_state
+              target:
+                entity_id: "${vars.sel}"
+              data:
+                state: laundry
+          - type: button
+            name: Washed
+            icon: mdi:washing-machine
+            tap_action:
+              action: call-service
+              service: wardrobe.mark_washed
+              target:
+                entity_id: "${vars.sel}"

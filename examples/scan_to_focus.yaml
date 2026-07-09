@@ -1,0 +1,84 @@
+# =============================================================================
+# Wardrobe — "scan to focus + open dashboard"
+# =============================================================================
+#
+# Replaces scan-to-wear with scan-to-focus: scanning an item's NFC tag stores
+# it in a helper and opens its dashboard on the phone that scanned, so you pick
+# the action (wear / laundry / washed) from the UI instead of the scan mutating
+# state blindly.
+#
+# Pieces
+# ------
+# * input_text.wardrobe_focused_item  – holds the focused item's state-select
+#   entity id (e.g. `select.wool_coat_state`).
+# * automation                        – on the integration's
+#   `wardrobe_item_scanned` event, sets the helper and navigates the scanning
+#   phone (Companion app) to the focused-item dashboard.
+#
+# Prerequisites
+# -------------
+# 1. Set each item's scan action to **"Open its dashboard (don't change
+#    state)"** (item device → Configure → Tracking). This makes scanning
+#    focus-only. (The event fires for the other scan actions too, so this
+#    still works if you keep, say, "cycle" — the scan just also mutates.)
+# 2. The Home Assistant Companion app on the scanning phone(s). `command_webview`
+#    navigation is Android-only; on iOS the helper is still set (use the kiosk
+#    view or a tap-through notification instead of auto-navigation).
+# 3. A dashboard with the focused-item view (see
+#    dashboard_focused_item_view.yaml). Set `dashboard_path` below to its path,
+#    e.g. `/wardrobe/item` for a dashboard at url `wardrobe`, view path `item`.
+#
+# This is a "package" — drop it in `packages/wardrobe_scan.yaml` and ensure
+# `homeassistant: packages: !include_dir_named packages` is in configuration.yaml,
+# or split the `input_text:` and `automation:` blocks into their own files.
+# =============================================================================
+
+input_text:
+  wardrobe_focused_item:
+    name: Wardrobe focused item
+    icon: mdi:hanger
+    max: 255
+
+automation:
+  - id: wardrobe_scan_to_focus
+    alias: "Wardrobe: scan focuses item + opens dashboard"
+    description: >-
+      Store the scanned item in a helper and open its dashboard on the phone
+      that scanned it.
+    mode: parallel
+    max: 10
+    trigger:
+      - platform: event
+        event_type: wardrobe_item_scanned
+    variables:
+      focused_entity: "{{ trigger.event.data.entity_id }}"
+      scan_device: "{{ trigger.event.data.device_id }}"
+      # Path of the focused-item view — match your dashboard's url + view path.
+      dashboard_path: "/wardrobe/item"
+    condition:
+      # Bulk items have no state select, so entity_id is null — skip them.
+      - "{{ focused_entity not in (none, 'None', '') }}"
+    action:
+      - service: input_text.set_value
+        target:
+          entity_id: input_text.wardrobe_focused_item
+        data:
+          value: "{{ focused_entity }}"
+      - choose:
+          # Scanned via the Companion app: open the dashboard on THAT phone.
+          - conditions:
+              - "{{ scan_device not in (none, 'None', '') }}"
+            sequence:
+              - service: "notify.mobile_app_{{ device_attr(scan_device, 'name') | slugify }}"
+                data:
+                  message: "command_webview"
+                  data:
+                    command: "{{ dashboard_path }}"
+        # Scanned from something without a device (e.g. a wired reader):
+        # fall back to a fixed phone. Change or delete as needed.
+        default:
+          - service: notify.mobile_app_your_phone     # <-- CHANGE ME (or remove)
+            data:
+              message: "command_webview"
+              data:
+                command: "{{ dashboard_path }}"

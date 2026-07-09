@@ -1,0 +1,91 @@
+# =============================================================================
+# Wardrobe — "a laundry load is full" alert
+# =============================================================================
+#
+# The summary hub exposes one binary sensor per laundry type
+# (`binary_sensor.wardrobe_summary_<type>_load_ready`) that turns on when the
+# combined weight of dirty items of that type reaches the configured load size.
+#
+# This automation triggers on ALL of them turning on and pushes a notification
+# naming the type, the waiting items and the total weight. It also offers an
+# actionable "Mark load washed" button you can press once the machine has run,
+# which calls `wardrobe.wash_load` for that type (every dirty item of that type
+# → clean).
+#
+# Requirements
+# ------------
+# * Actionable button needs the Companion app — replace
+#   `notify.mobile_app_your_phone` with your device's notify service.
+# * Load thresholds are set on the hub via its options
+#   ("Complete wash cycle" device → Configure → load sizes).
+#
+# Classic automation syntax (trigger/condition/action + service) so it loads on
+# every supported core (HA 2024.3+).
+# =============================================================================
+
+- id: wardrobe_load_ready_notify
+  alias: "Wardrobe: laundry load full → notify"
+  description: >-
+    Alert when a full load of one laundry type is waiting, with a button to
+    mark that load washed after the machine runs.
+  mode: parallel
+  max: 10
+  trigger:
+    - platform: state
+      entity_id:
+        - binary_sensor.wardrobe_summary_dark_load_ready
+        - binary_sensor.wardrobe_summary_light_load_ready
+        - binary_sensor.wardrobe_summary_color_load_ready
+        - binary_sensor.wardrobe_summary_delicates_load_ready
+        - binary_sensor.wardrobe_summary_wool_load_ready
+        - binary_sensor.wardrobe_summary_hand_wash_load_ready
+      to: "on"
+  variables:
+    # e.g. binary_sensor.wardrobe_summary_hand_wash_load_ready -> "hand_wash"
+    laundry_type: >-
+      {{ trigger.to_state.entity_id
+         | regex_findall_index('wardrobe_summary_(.*)_load_ready') }}
+    # Friendly label from the sensor name ("Hand-wash load ready" -> "Hand-wash")
+    type_label: >-
+      {{ trigger.to_state.name | replace(' load ready', '') }}
+    items: "{{ trigger.to_state.attributes.get('items', []) }}"
+    total_weight: "{{ trigger.to_state.attributes.get('total_weight', 0) }}"
+    load_size: "{{ trigger.to_state.attributes.get('load_size', 0) }}"
+  action:
+    - service: notify.mobile_app_your_phone     # <-- CHANGE ME
+      data:
+        title: "🧺 {{ type_label }} load is full"
+        message: >-
+          {{ items | count }} item(s) waiting
+          (weight {{ total_weight }} / {{ load_size }}):
+          {{ items | join(', ') }}.
+        data:
+          tag: "wardrobe_load_ready_{{ laundry_type }}"
+          actions:
+            - action: "WARDROBE_WASH_LOAD|{{ laundry_type }}"
+              title: "Mark load washed"
+              icon: "sfsymbols:washer"
+
+- id: wardrobe_load_washed_action
+  alias: "Wardrobe: 'Mark load washed' button pressed"
+  description: >-
+    Handles the actionable button from wardrobe_load_ready_notify and runs
+    wardrobe.wash_load for the chosen laundry type.
+  mode: parallel
+  max: 10
+  trigger:
+    - platform: event
+      event_type: mobile_app_notification_action
+  condition:
+    - condition: template
+      value_template: >-
+        {{ trigger.event.data.action.startswith('WARDROBE_WASH_LOAD|') }}
+  action:
+    - service: wardrobe.wash_load
+      data:
+        laundry_type: "{{ trigger.event.data.action.split('|')[1] }}"
+    - service: notify.mobile_app_your_phone     # <-- CHANGE ME
+      data:
+        message: clear_notification
+        data:
+          tag: "wardrobe_load_ready_{{ trigger.event.data.action.split('|')[1] }}"

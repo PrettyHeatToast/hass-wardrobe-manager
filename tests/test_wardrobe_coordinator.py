@@ -10,12 +10,13 @@ from pytest_homeassistant_custom_component.common import async_capture_events
 
 from custom_components.wardrobe.const import (
     CONF_WEIGHT,
+    EVENT_ITEM_SCANNED,
     EVENT_NEEDS_WASH,
     EVENT_STATE_CHANGED,
     EVENT_TAG_SCANNED,
 )
 
-from .helpers import coordinator_of, setup_bulk_item, setup_item
+from .helpers import coordinator_of, entity_id, setup_bulk_item, setup_item
 
 
 async def test_weight_config_seed_and_runtime_override(hass: HomeAssistant) -> None:
@@ -323,6 +324,42 @@ async def test_tag_scan_respects_scan_action(hass: HomeAssistant) -> None:
     rec = coordinator.get_record(washed_item.entry_id)
     assert rec["state"] == "clean"
     assert rec["wash_count"] == 1
+
+
+async def test_open_scan_action_focuses_without_mutating(hass: HomeAssistant) -> None:
+    entry = await setup_item(
+        hass, name="Wool Coat", nfc_tag_id="tag-o", scan_action="open"
+    )
+    coordinator = coordinator_of(hass)
+    scanned = async_capture_events(hass, EVENT_ITEM_SCANNED)
+    changed = async_capture_events(hass, EVENT_STATE_CHANGED)
+
+    hass.bus.async_fire(EVENT_TAG_SCANNED, {"tag_id": "tag-o", "device_id": "phone-1"})
+    await hass.async_block_till_done()
+
+    # State is untouched...
+    assert coordinator.get_state(entry.entry_id) == "clean"
+    assert not changed
+    # ...but the scan is announced with the resolved item and scanning device.
+    assert len(scanned) == 1
+    data = scanned[0].data
+    assert data["entry_id"] == entry.entry_id
+    assert data["name"] == "Wool Coat"
+    assert data["entity_id"] == entity_id(hass, "select", entry, "state")
+    assert data["device_id"] == "phone-1"
+
+
+async def test_scan_event_fires_even_when_mutating(hass: HomeAssistant) -> None:
+    entry = await setup_item(hass, nfc_tag_id="tag-c", scan_action="mark_worn")
+    coordinator = coordinator_of(hass)
+    scanned = async_capture_events(hass, EVENT_ITEM_SCANNED)
+
+    hass.bus.async_fire(EVENT_TAG_SCANNED, {"tag_id": "tag-c"})
+    await hass.async_block_till_done()
+
+    assert coordinator.get_state(entry.entry_id) == "worn"
+    assert len(scanned) == 1
+    assert scanned[0].data["entity_id"] == entity_id(hass, "select", entry, "state")
 
 
 async def test_unmatched_tag_is_ignored(hass: HomeAssistant) -> None:

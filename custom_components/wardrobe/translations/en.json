@@ -174,7 +174,8 @@
       "options": {
         "cycle": "Cycle to the next state",
         "mark_worn": "Mark as worn",
-        "mark_washed": "Mark as washed"
+        "mark_washed": "Mark as washed",
+        "open": "Open its dashboard (don't change state)"
       }
     },
     "tracking_mode": {

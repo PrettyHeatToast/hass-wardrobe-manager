@@ -96,6 +96,9 @@ SUMMARY_HUB_UNIQUE_ID: Final = "_wardrobe_summary_hub"
 EVENT_STATE_CHANGED: Final = "wardrobe_state_changed"
 EVENT_NEEDS_WASH: Final = "wardrobe_needs_wash"
 EVENT_WASH_COMPLETED: Final = "wardrobe_wash_completed"
+# Fired on every NFC scan that matches an item, carrying the resolved item so
+# front-ends can focus/open it (see the ``open`` scan action).
+EVENT_ITEM_SCANNED: Final = "wardrobe_item_scanned"
 EVENT_TAG_SCANNED: Final = "tag_scanned"  # fired by HA's built-in tag integration
 
 # ---------------------------------------------------------------------------
@@ -228,6 +231,7 @@ class ScanAction(StrEnum):
     CYCLE = "cycle"
     MARK_WORN = "mark_worn"
     MARK_WASHED = "mark_washed"
+    OPEN = "open"  # focus the item / open its dashboard, without changing state
 
 
 SCAN_ACTIONS: Final = [action.value for action in ScanAction]

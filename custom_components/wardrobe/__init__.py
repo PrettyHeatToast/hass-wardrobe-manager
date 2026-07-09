@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant.config_entries import SOURCE_INTEGRATION_DISCOVERY, ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     ALL_STATES,
@@ -28,6 +29,7 @@ from .const import (
     DEFAULT_SCAN_ACTION,
     DIRTY_STATES,
     DOMAIN,
+    EVENT_ITEM_SCANNED,
     EVENT_TAG_SCANNED,
     EVENT_WASH_COMPLETED,
     HUB_PLATFORMS,
@@ -169,8 +171,28 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
         "entry_ids": set(),
     }
 
-    async def _handle_scan(entry: ConfigEntry) -> None:
+    def _state_entity_id(entry_id: str) -> str | None:
+        """Resolve an item's state-select entity id, if it is registered."""
+        return er.async_get(hass).async_get_entity_id(
+            "select", DOMAIN, f"{DOMAIN}_{entry_id}_state"
+        )
+
+    async def _handle_scan(entry: ConfigEntry, device_id: str | None) -> None:
+        # Announce the scan first so front-ends can focus/open the item
+        # regardless of whether the scan also mutates state.
+        hass.bus.async_fire(
+            EVENT_ITEM_SCANNED,
+            {
+                "entry_id": entry.entry_id,
+                "name": entry.data.get(CONF_ITEM_NAME),
+                "entity_id": _state_entity_id(entry.entry_id),
+                "device_id": device_id,
+            },
+        )
+
         action = entry.data.get(CONF_SCAN_ACTION, DEFAULT_SCAN_ACTION)
+        if action == ScanAction.OPEN.value:
+            return  # focus-only: the front-end drives everything from here
         if action == ScanAction.MARK_WORN.value:
             await coordinator.async_mark_worn(entry.entry_id)
         elif action == ScanAction.MARK_WASHED.value:
@@ -183,9 +205,10 @@ async def _ensure_shared(hass: HomeAssistant) -> dict[str, Any]:
         tag_id = event.data.get("tag_id")
         if not tag_id:
             return
+        device_id = event.data.get("device_id")
         for entry in _item_entries(hass):
             if entry.data.get(CONF_NFC_TAG_ID) == tag_id:
-                hass.async_create_task(_handle_scan(entry))
+                hass.async_create_task(_handle_scan(entry, device_id))
                 return
         _LOGGER.debug("Ignoring tag scan with no matching wardrobe item: %s", tag_id)
 

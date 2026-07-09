@@ -1,0 +1,116 @@
+# =============================================================================
+# Wardrobe — single-item dashboard card
+# =============================================================================
+#
+# A self-contained card that shows everything about one garment: its state,
+# quick-action buttons, wear/wash statistics, the wear threshold, cost per wear
+# and all the optional metadata (brand, size, colour, material, …).
+#
+# How to use
+# ----------
+# Add this via the dashboard's raw config editor (⋮ → Edit dashboard →
+# ⋮ → Raw configuration editor) inside a view's `cards:` list, OR paste it as a
+# Manual card.
+#
+# Replace the item slug everywhere below. The integration builds entity ids as
+#   <platform>.<item name slugified>_<suffix>
+# so for an item named "Blue Jeans" the slug is `blue_jeans`. A find & replace
+# of `blue_jeans` -> your slug is all that's needed. Metadata (brand, size,
+# colour, …) lives as attributes on the `select.<slug>_state` entity, which the
+# markdown block reads dynamically — only fields you actually filled in show up.
+# =============================================================================
+
+type: vertical-stack
+cards:
+  # --- State + quick actions ------------------------------------------------
+  - type: entities
+    title: Blue Jeans
+    show_header_toggle: false
+    entities:
+      - entity: select.blue_jeans_state
+        name: State
+      - type: buttons
+        entities:
+          - entity: button.blue_jeans_i_wore_this
+            name: Wore it
+          - entity: button.blue_jeans_washed
+            name: Washed
+      - entity: number.blue_jeans_wears_per_wash_cycle
+        name: Wears per wash
+
+  # --- "Needs washing" banner (only visible when on) ------------------------
+  - type: conditional
+    conditions:
+      - condition: state
+        entity: binary_sensor.blue_jeans_needs_washing
+        state: "on"
+    card:
+      type: markdown
+      content: >-
+        ## ⚠️ Needs washing
+
+        Worn {{ state_attr('binary_sensor.blue_jeans_needs_washing',
+        'wears_since_wash') }} of
+        {{ state_attr('binary_sensor.blue_jeans_needs_washing', 'threshold') }}
+        wears since the last wash.
+
+  # --- Wear / wash statistics ----------------------------------------------
+  - type: entities
+    title: Statistics
+    show_header_toggle: false
+    entities:
+      - entity: sensor.blue_jeans_wears_since_wash
+        name: Wears since wash
+      - entity: sensor.blue_jeans_total_wears
+        name: Total wears
+      - entity: sensor.blue_jeans_wash_count
+        name: Times washed
+      - entity: sensor.blue_jeans_last_worn
+        name: Last worn
+      - entity: sensor.blue_jeans_last_washed
+        name: Last washed
+      - entity: sensor.blue_jeans_last_state_change
+        name: Last state change
+      # Cost per wear only exists when a purchase price was entered.
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: sensor.blue_jeans_cost_per_wear
+            state_not: "unavailable"
+        row:
+          entity: sensor.blue_jeans_cost_per_wear
+          name: Cost per wear
+
+  # --- Metadata (read from the select entity's attributes) ------------------
+  # A literal block scalar (|) keeps the newlines; only fields you filled in
+  # are rendered, as a bullet list.
+  - type: markdown
+    content: |
+      {% set s = 'select.blue_jeans_state' %}
+      {% set ns = namespace(lines=[]) %}
+      {% set fields = [
+        ('Category', state_attr(s, 'category')),
+        ('Laundry type', state_attr(s, 'laundry_type')),
+        ('Brand', state_attr(s, 'brand')),
+        ('Size', state_attr(s, 'size')),
+        ('Colour', state_attr(s, 'color')),
+        ('Material', state_attr(s, 'material')),
+        ('Seasons', state_attr(s, 'seasons')),
+        ('Location', state_attr(s, 'location')),
+        ('Bought', state_attr(s, 'purchase_date')),
+        ('Price', state_attr(s, 'purchase_price')),
+      ] %}
+      {% for label, val in fields if val %}
+        {% set v = (val | join(', ')) if (val is iterable and val is not string) else val %}
+        {% set ns.lines = ns.lines + ['- **' ~ label ~ ':** ' ~ v] %}
+      {% endfor %}
+      {% if state_attr(s, 'nfc_tag_id') %}
+        {% set ns.lines = ns.lines + ['- **NFC tag:** `' ~ state_attr(s, 'nfc_tag_id') ~ '`'] %}
+      {% endif %}
+      ### Details
+
+      {{ ns.lines | join('\n') }}
+      {% if state_attr(s, 'notes') %}
+
+      _{{ state_attr(s, 'notes') }}_
+      {% endif %}
